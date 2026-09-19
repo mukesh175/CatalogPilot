@@ -33,7 +33,27 @@ function OnboardingWizard() {
   const params = useSearchParams();
   const toast = useToast();
 
-  const [step, setStep] = useState('welcome');
+  // A history stack rather than a step index, because the path through the
+  // wizard varies: a published CSV has no worksheet to choose, so "back" has
+  // to return where the merchant actually came from.
+  const [step, setStepValue] = useState('welcome');
+  const [history, setHistory] = useState([]);
+
+  const goTo = useCallback((next) => {
+    setStepValue((current) => {
+      setHistory((stack) => [...stack, current]);
+      return next;
+    });
+  }, []);
+
+  const goBack = useCallback(() => {
+    setHistory((stack) => {
+      if (stack.length === 0) return stack;
+      setStepValue(stack[stack.length - 1]);
+      return stack.slice(0, -1);
+    });
+  }, []);
+
   const [source, setSource] = useState(null);
   const [worksheets, setWorksheets] = useState([]);
   const [mappingState, setMappingState] = useState(null);
@@ -45,12 +65,12 @@ function OnboardingWizard() {
     const googleStatus = params.get('google');
     if (!googleStatus) return;
     if (googleStatus === 'connected') {
-      setStep('source');
+      goTo('source');
       toast.success('Google account connected.');
     } else {
       toast.error('Google did not complete the connection. Try again.');
     }
-  }, [params, toast]);
+  }, [params, toast, goTo]);
 
   const connectGoogle = async () => {
     setBusy(true);
@@ -76,7 +96,7 @@ function OnboardingWizard() {
     try {
       if (result.source.kind === 'GOOGLE_SHEET_SERVICE') {
         setWorksheets(result.worksheets);
-        setStep('worksheet');
+        goTo('worksheet');
         return;
       }
 
@@ -88,7 +108,7 @@ function OnboardingWizard() {
         sample: result.sample,
         rowCount: result.rowCount,
       });
-      setStep('mapping');
+      goTo('mapping');
     } catch (error) {
       toast.error(error.message);
     } finally {
@@ -107,7 +127,7 @@ function OnboardingWizard() {
       });
       setSource(result.source);
       setWorksheets(result.worksheets);
-      setStep('worksheet');
+      goTo('worksheet');
     } catch (error) {
       toast.error(error.message);
     } finally {
@@ -131,7 +151,7 @@ function OnboardingWizard() {
         sample: result.sample,
         rowCount: result.rowCount,
       });
-      setStep('mapping');
+      goTo('mapping');
     } catch (error) {
       toast.error(error.message);
     } finally {
@@ -161,7 +181,7 @@ function OnboardingWizard() {
         setMappingState((current) => ({ ...current, mappings: result.mappings }));
         return;
       }
-      setStep('rules');
+      goTo('rules');
     } catch (error) {
       toast.error(error.message);
     } finally {
@@ -174,20 +194,20 @@ function OnboardingWizard() {
     try {
       const result = await api.post('/api/jobs', { dataSourceId: source.id, kind: 'PREVIEW' });
       setJobId(result.job.id);
-      setStep('preview');
+      goTo('preview');
     } catch (error) {
       toast.error(error.message);
     } finally {
       setBusy(false);
     }
-  }, [source, toast]);
+  }, [source, toast, goTo]);
 
   const runSync = async () => {
     setBusy(true);
     try {
       const result = await api.post(`/api/jobs/${jobId}/apply`);
       setJobId(result.job.id);
-      setStep('sync');
+      goTo('sync');
     } catch (error) {
       toast.error(error.message);
     } finally {
@@ -195,8 +215,32 @@ function OnboardingWizard() {
     }
   };
 
+  // The wizard sits outside the app shell, so it carries its own way out —
+  // otherwise a merchant who opens it has no navigation at all.
+  const syncing = step === 'sync';
+
   return (
     <div className="cp-wizard">
+      <div className="cp-spread mb-4 flex-wrap gap-2">
+        <div className="cp-inline">
+          <span className="cp-brand-mark" aria-hidden="true">
+            CP
+          </span>
+          <strong>CatalogPilot setup</strong>
+        </div>
+
+        <div className="cp-inline">
+          {history.length > 0 && !syncing ? (
+            <button type="button" className="cp-btn cp-btn-sm" onClick={goBack} disabled={busy}>
+              ← Back
+            </button>
+          ) : null}
+          <Link href="/" className="cp-btn cp-btn-sm">
+            {syncing ? 'Go to dashboard' : 'Skip for now'}
+          </Link>
+        </div>
+      </div>
+
       <StepIndicator current={step} />
 
       {step === 'welcome' ? (

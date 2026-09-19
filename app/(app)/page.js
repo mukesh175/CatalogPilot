@@ -23,10 +23,27 @@ export default function DashboardPage() {
   // Poll while a job is running so progress is live without a refresh.
   const { data, loading, error } = useApi('/api/dashboard', { pollMs: 4000 });
 
+  /**
+   * Send a brand-new store into setup, but only once per visit.
+   *
+   * Without the marker this fires again the moment the merchant leaves the
+   * wizard — they press "Skip for now", land here with no sources, and are
+   * bounced straight back, with no way out of the loop.
+   */
   useEffect(() => {
-    if (data && !data.shop.onboardingDone && data.metrics.sources === 0) {
-      router.replace('/onboarding');
+    if (!data || data.shop.onboardingDone || data.metrics.sources > 0) return;
+
+    let alreadySent = false;
+    try {
+      alreadySent = sessionStorage.getItem('cp-onboarding-offered') === '1';
+      sessionStorage.setItem('cp-onboarding-offered', '1');
+    } catch {
+      // Private mode or blocked storage: show the dashboard's empty state,
+      // which offers setup anyway. Never redirect blindly.
+      return;
     }
+
+    if (!alreadySent) router.replace('/onboarding');
   }, [data, router]);
 
   if (loading && !data) return <DashboardSkeleton />;
