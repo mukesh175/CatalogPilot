@@ -265,6 +265,7 @@ CREATE TABLE "SyncJob" (
     "lockedBy" TEXT,
     "startedAt" TIMESTAMP(3),
     "finishedAt" TIMESTAMP(3),
+    "planCompletedAt" TIMESTAMP(3),
     "cancelRequested" BOOLEAN NOT NULL DEFAULT false,
     "totalRows" INTEGER NOT NULL DEFAULT 0,
     "processedRows" INTEGER NOT NULL DEFAULT 0,

@@ -4,7 +4,13 @@ import { startJobSchema } from '../../../validators/index.js';
 import { enqueueJob, JobConflictError, PlanLimitError } from '../../../services/job-service.js';
 import { validateMappingSet } from '../../../services/mapping-engine.js';
 import { runJob } from '../../../jobs/runner.js';
-import { logger } from '../../../lib/logger.js';
+import { kickJob } from '../../../lib/background.js';
+
+// Leaves headroom inside the function's 300s limit so the job yields cleanly
+// rather than being killed mid-write.
+const BACKGROUND_BUDGET_MS = 280_000;
+
+export const maxDuration = 300;
 
 /** Recent jobs for the sync center. */
 export const GET = withAuth(async (request, { shopId }) => {
@@ -41,7 +47,7 @@ export const GET = withAuth(async (request, { shopId }) => {
  * A sync is refused unless the mapping set is complete — the merchant is sent
  * back to the mapping step rather than discovering the problem row by row.
  */
-export const POST = withAuth(async (request, { shopId, log }) => {
+export const POST = withAuth(async (request, { shopId }) => {
   const { dataSourceId, kind } = await parseBody(request, startJobSchema);
 
   const source = await prisma.dataSource.findFirst({
@@ -65,9 +71,10 @@ export const POST = withAuth(async (request, { shopId, log }) => {
   try {
     const job = await enqueueJob({ shopId, dataSourceId, kind, triggeredBy: 'manual' });
 
-    // Kick the worker without blocking the response. A deployment running the
-    // standalone worker will simply find the job already claimed.
-    runJob(job.id).catch((error) => log.error('jobs.inline_run_failed', { jobId: job.id, error }));
+    // Start the job without blocking the response, and keep it alive past the
+    // response with waitUntil. If this invocation is cut short, the job stays
+    // QUEUED and the cron runner picks it up.
+    kickJob(job.id, runJob, { deadline: Date.now() + BACKGROUND_BUDGET_MS });
 
     return json({ job: { id: job.id, kind: job.kind, status: job.status } }, { status: 202 });
   } catch (error) {

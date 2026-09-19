@@ -10,22 +10,34 @@ sync on a schedule.
 
 ## Setup
 
+Target deployment: **Vercel** for hosting, **Neon** for PostgreSQL.
+
 ### 1. Requirements
 
 - Node.js 20 or newer
-- PostgreSQL 14 or newer
+- A Neon project
+- A Vercel project (**Pro plan** — see [Scheduled sync](#scheduled-sync-and-the-vercel-plan))
 - A Shopify Partner app
 - A Google Cloud project with the Sheets and Drive APIs enabled
 
-### 2. Install
+### 2. Create the Neon database
+
+In the Neon console, create a project and copy **both** connection strings from
+**Connection Details**:
+
+- **Pooled** — the host contains `-pooler`. This is `DATABASE_URL`, used by the app. Serverless
+  functions open many short-lived connections, and the pooler is what keeps them from exhausting
+  Postgres' connection slots.
+- **Direct** — no `-pooler`. This is `DIRECT_URL`, used only by `prisma migrate`, which performs
+  session-level operations the pooler does not support.
+
+Add `?sslmode=require&connect_timeout=15` to the pooled URL. The timeout matters: a Neon compute that
+has scaled to zero needs a moment to wake, and the default is short enough to fail the first request.
+
+### 3. Install and configure
 
 ```bash
 npm install
-```
-
-### 3. Configure
-
-```bash
 cp .env.example .env
 ```
 
@@ -35,12 +47,11 @@ Generate the encryption key:
 node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 ```
 
-Fill in `.env`:
-
 | Variable | What it is |
 | --- | --- |
-| `APP_URL` | Public HTTPS URL of this app (your tunnel in development) |
-| `DATABASE_URL` | PostgreSQL connection string |
+| `APP_URL` | Your Vercel production URL |
+| `DATABASE_URL` | Neon **pooled** connection string |
+| `DIRECT_URL` | Neon **direct** connection string (migrations only) |
 | `ENCRYPTION_KEY` | 32 random bytes, base64 — encrypts stored OAuth tokens |
 | `APP_SECRET` | Any long random string — signs OAuth state tokens |
 | `SHOPIFY_API_KEY` / `SHOPIFY_API_SECRET` | From your Partner dashboard |
@@ -48,48 +59,94 @@ Fill in `.env`:
 | `SHOPIFY_API_VERSION` | `2026-07` (current stable) |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | From Google Cloud Console |
 | `GOOGLE_REDIRECT_URI` | `<APP_URL>/api/auth/google/callback` |
-| `JOB_RUNNER_SECRET` | Shared secret for the cron endpoint |
+| `CRON_SECRET` | 16+ random chars. Vercel sends it automatically to the cron endpoint |
+| `JOB_RUNNER_SECRET` | Optional — only to trigger the runner yourself |
 | `SMTP_URL` | Optional. Without it the app works fully, minus outbound email |
 
 In the Google Cloud console, add `<APP_URL>/api/auth/google/callback` as an authorized redirect URI.
 
-### 4. Database
+### 4. Run the migration
+
+Migrations run from your machine (or CI), not from a Vercel build:
 
 ```bash
 npx prisma migrate deploy
-npx prisma generate
 ```
 
-For development, `npx prisma migrate dev` creates and applies migrations as the schema changes.
+`npm run build` runs `prisma generate` already, so the client is always regenerated on deploy. Do not
+add `migrate deploy` to the build command — concurrent builds would race on the same schema.
 
-### 5. Run
+### 5. Deploy to Vercel
 
 ```bash
-npm run dev
+vercel link
+vercel env add ENCRYPTION_KEY production      # repeat for each variable above
+vercel --prod
 ```
 
-Background work needs one of these:
+Or import the repo in the Vercel dashboard and paste the variables into
+**Settings → Environment Variables**. `vercel.json` is already configured with the cron schedule and
+function durations.
 
-```bash
-npm run worker      # long-running worker: claims and runs queued jobs
-npm run scheduler   # queues jobs whose schedule is due
-```
-
-On a serverless host, skip both and point a one-minute cron at:
-
-```
-POST /api/jobs/run
-Authorization: Bearer <JOB_RUNNER_SECRET>
-```
-
-That endpoint sweeps due schedules and drains the queue in the same call.
+After the first deploy, set `APP_URL` and `GOOGLE_REDIRECT_URI` to the real production URL and redeploy.
 
 ### 6. Install on a store
 
 ```bash
 shopify app config link     # links shopify.app.toml to your app
-shopify app dev
+shopify app deploy          # registers webhooks and scopes
 ```
+
+Set `application_url` in `shopify.app.toml` to your Vercel URL.
+
+### Local development
+
+```bash
+npm run dev
+```
+
+Cron does not run locally, so trigger the job runner by hand:
+
+```bash
+curl -X POST http://localhost:3000/api/jobs/run -H "Authorization: Bearer $JOB_RUNNER_SECRET"
+```
+
+---
+
+## How background work runs on Vercel
+
+Vercel has no long-running processes, so there is no worker daemon. Instead:
+
+- **Vercel Cron** hits `GET /api/jobs/run` every five minutes (`vercel.json`). Vercel authenticates it
+  by sending `Authorization: Bearer $CRON_SECRET`; the endpoint accepts that or `JOB_RUNNER_SECRET`.
+  That one call both queues due schedules and works the queue.
+- **Interactive actions** (starting a preview, approving a sync, retrying errors) start the job
+  immediately via `waitUntil`, so the merchant does not wait up to five minutes for feedback. A bare
+  floating promise would not work — Vercel freezes the function the moment the response is sent.
+- **Jobs run under a deadline.** A function is killed at `maxDuration` (300s), so the runner stops at
+  280s, hands the job back to the queue as `QUEUED`, and the next cron tick resumes it. Both phases are
+  resumable: planning tracks a row high-water mark and `planCompletedAt`, and applying leaves unfinished
+  items `PENDING`. Nothing is re-applied, because applied items are marked `APPLIED`.
+- **Overlap is prevented by a database lock**, not by cron timing — Vercel explicitly warns that crons
+  can overlap, duplicate, or be missed. The conditional `updateMany` claim means only one invocation
+  ever owns a job, and a lock left by a hard kill is released after ten minutes.
+
+A very large catalog therefore syncs across several cron ticks rather than in one call. That is by
+design; progress is visible throughout.
+
+`npm run worker` and `npm run scheduler` still exist for self-hosted deployments (a container, Fly,
+Railway). They are not used on Vercel.
+
+### Scheduled sync and the Vercel plan
+
+**Vercel Hobby only permits one cron invocation per day**, and a more frequent expression in
+`vercel.json` *fails the deployment*. Hobby also invokes it at any point within the scheduled hour.
+
+This has a direct product consequence: on Hobby, the hourly and six-hourly schedules the Starter,
+Growth and Pro plans advertise cannot actually run, because the queue is only worked once a day.
+**Deploy on Vercel Pro** if you intend to sell those plans. If you must stay on Hobby, change the cron
+to `0 3 * * *` and restrict the app's own schedule options in `lib/plans.js` to `DAILY` and `WEEKLY`
+so the UI does not promise something the host cannot deliver.
 
 ---
 
@@ -238,10 +295,13 @@ product importer, spreadsheet to shopify
 
 ## Deployment checklist
 
-- [ ] `DATABASE_URL` points at a Postgres with connection pooling
-- [ ] `npx prisma migrate deploy` has run
-- [ ] `ENCRYPTION_KEY` is stored in a secret manager, not in the repo
+- [ ] `DATABASE_URL` is the Neon **pooled** URL (`-pooler` in the host)
+- [ ] `DIRECT_URL` is the Neon **direct** URL
+- [ ] `npx prisma migrate deploy` has run against the direct URL
+- [ ] Every environment variable is set in Vercel for the **Production** environment
+- [ ] `CRON_SECRET` is set — without it the cron endpoint rejects every invocation
+- [ ] The Vercel project is on **Pro** if you sell sub-daily scheduled sync
 - [ ] `APP_URL` matches `application_url` in `shopify.app.toml`
 - [ ] Webhooks deployed with `shopify app deploy`
-- [ ] A worker process is running, or cron hits `/api/jobs/run` every minute
+- [ ] The cron job appears under **Settings → Cron Jobs** after the first production deploy
 - [ ] `/api/health` returns 200

@@ -6,8 +6,10 @@ import { runJob, releaseStaleJobs, WORKER_ID } from './runner.js';
 /**
  * Long-running worker process: `npm run worker`.
  *
- * Polls for queued jobs. Deployments that prefer a serverless model can skip
- * this entirely and drive /api/jobs/run from their own scheduler instead.
+ * NOT used on Vercel — a serverless deployment has nowhere to run a persistent
+ * process. There, Vercel Cron drives /api/jobs/run instead (see vercel.json),
+ * which calls the same runner. This file is for self-hosted deployments
+ * (a container, a VM, Railway, Fly) that prefer a dedicated worker.
  */
 
 const POLL_INTERVAL_MS = Number(process.env.WORKER_POLL_MS || 5000);

@@ -23,6 +23,7 @@
   "dependencies": {
     "@prisma/client": "^6.1.0",
     "@shopify/app-bridge-react": "^4.1.6",
+    "@vercel/functions": "^3.9.8",
     "bootstrap": "^5.3.3",
     "exceljs": "^4.4.0",
     "googleapis": "^144.0.0",

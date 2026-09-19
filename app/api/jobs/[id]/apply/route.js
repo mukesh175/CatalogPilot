@@ -2,6 +2,11 @@ import prisma from '../../../../../lib/prisma.js';
 import { withAuth, json, apiError } from '../../../../../lib/api.js';
 import { enqueueJob, JobConflictError, PlanLimitError } from '../../../../../services/job-service.js';
 import { runJob } from '../../../../../jobs/runner.js';
+import { kickJob } from '../../../../../lib/background.js';
+
+const BACKGROUND_BUDGET_MS = 280_000;
+
+export const maxDuration = 300;
 
 /**
  * Approves a preview and runs the sync.
@@ -10,7 +15,7 @@ import { runJob } from '../../../../../jobs/runner.js';
  * runs is exactly what the merchant saw — not a fresh plan built from a sheet
  * that may have changed in the meantime.
  */
-export const POST = withAuth(async (request, { shopId, log, params }) => {
+export const POST = withAuth(async (request, { shopId, params }) => {
   const preview = await prisma.syncJob.findFirst({
     where: { id: params.id, shopId, kind: 'PREVIEW' },
     include: { _count: { select: { items: true } } },
@@ -60,12 +65,15 @@ export const POST = withAuth(async (request, { shopId, log, params }) => {
       skipDuplicates: true,
     });
 
+    // The approved preview *is* the plan, so the sync job is marked planned.
+    // Without this the runner would rebuild the plan and could apply rows the
+    // merchant never saw.
     await prisma.syncJob.update({
       where: { id: job.id },
-      data: { totalRows: items.length },
+      data: { totalRows: items.length, planCompletedAt: new Date() },
     });
 
-    runJob(job.id).catch((error) => log.error('jobs.apply_run_failed', { jobId: job.id, error }));
+    kickJob(job.id, runJob, { deadline: Date.now() + BACKGROUND_BUDGET_MS });
 
     return json({ job: { id: job.id, status: 'QUEUED', total: items.length } }, { status: 202 });
   } catch (error) {

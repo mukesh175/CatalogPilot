@@ -7,8 +7,14 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  // Neon: the app connects through the pooled endpoint (the one with `-pooler`
+  // in the host), because serverless functions open many short-lived
+  // connections and would otherwise exhaust the database's connection slots.
+  url       = env("DATABASE_URL")
+  // Migrations need a direct connection — the pooler does not support the
+  // session-level operations `prisma migrate` performs.
+  directUrl = env("DIRECT_URL")
 }
 
 // ---------------------------------------------------------------- enums
@@ -313,14 +319,14 @@ model SyncRule {
   dataSourceId String?
   dataSource   DataSource? @relation(fields: [dataSourceId], references: [id], onDelete: Cascade)
 
-  kind      RuleKind
-  name      String
-  priority  Int      @default(100)
-  isEnabled Boolean  @default(true)
+  kind       RuleKind
+  name       String
+  priority   Int      @default(100)
+  isEnabled  Boolean  @default(true)
   // { operator: "AND"|"OR", clauses: [{ field, op, value }] }
-  conditions Json    @default("{\"operator\":\"AND\",\"clauses\":[]}")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  conditions Json     @default("{\"operator\":\"AND\",\"clauses\":[]}")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
   priceRule      PriceRule?
   inventoryRule  InventoryRule?
@@ -332,9 +338,9 @@ model SyncRule {
 }
 
 model PriceRule {
-  id         String   @id @default(cuid())
-  syncRuleId String   @unique
-  syncRule   SyncRule @relation(fields: [syncRuleId], references: [id], onDelete: Cascade)
+  id           String   @id @default(cuid())
+  syncRuleId   String   @unique
+  syncRule     SyncRule @relation(fields: [syncRuleId], references: [id], onDelete: Cascade)
   // expression AST: { op, left, right } with leaves { field } or { value }
   expression   Json
   targetField  String   @default("variant.price") // or variant.compareAtPrice
@@ -387,14 +393,18 @@ model SyncJob {
   dataSourceId String
   dataSource   DataSource @relation(fields: [dataSourceId], references: [id], onDelete: Cascade)
 
-  kind   JobKind   @default(SYNC)
-  status JobStatus @default(QUEUED)
+  kind            JobKind   @default(SYNC)
+  status          JobStatus @default(QUEUED)
   // idempotency: one key per (source, content snapshot, kind)
   idempotencyKey  String    @unique
   lockedAt        DateTime?
   lockedBy        String?
   startedAt       DateTime?
   finishedAt      DateTime?
+  /// Set once the plan phase has read the source to the end. A job that yields
+  /// part-way through planning leaves this null, so the next invocation knows
+  /// to keep planning rather than applying a half-built plan.
+  planCompletedAt DateTime?
   cancelRequested Boolean   @default(false)
 
   totalRows      Int @default(0)
@@ -424,20 +434,20 @@ model SyncJobItem {
   syncJobId String
   syncJob   SyncJob @relation(fields: [syncJobId], references: [id], onDelete: Cascade)
 
-  rowNumber Int
-  rowHash   String
-  sku       String?
-  handle    String?
-  title     String?
-  action    ItemAction @default(UNCHANGED)
-  status    ItemStatus @default(PENDING)
+  rowNumber        Int
+  rowHash          String
+  sku              String?
+  handle           String?
+  title            String?
+  action           ItemAction @default(UNCHANGED)
+  status           ItemStatus @default(PENDING)
   // [{ field, current, incoming, ruleName, explanation }]
-  changes          Json      @default("[]")
-  warnings         Json      @default("[]")
+  changes          Json       @default("[]")
+  warnings         Json       @default("[]")
   shopifyProductId String?
   shopifyVariantId String?
   appliedAt        DateTime?
-  createdAt        DateTime  @default(now())
+  createdAt        DateTime   @default(now())
 
   @@unique([syncJobId, rowNumber])
   @@index([syncJobId, action])
@@ -451,8 +461,8 @@ model SyncError {
   syncJob       SyncJob @relation(fields: [syncJobId], references: [id], onDelete: Cascade)
   syncJobItemId String?
 
-  kind       ErrorKind @default(UNKNOWN)
-  code       String?
+  kind         ErrorKind @default(UNKNOWN)
+  code         String?
   // merchant-facing copy — never a raw stack trace
   message      String
   suggestion   String?
@@ -461,12 +471,12 @@ model SyncError {
   rowNumber    Int?
   productTitle String?
   // developer detail, redacted before storage
-  detail      Json?
-  isRetryable Boolean   @default(false)
-  retryCount  Int       @default(0)
-  resolvedAt  DateTime?
-  ignoredAt   DateTime?
-  createdAt   DateTime  @default(now())
+  detail       Json?
+  isRetryable  Boolean   @default(false)
+  retryCount   Int       @default(0)
+  resolvedAt   DateTime?
+  ignoredAt    DateTime?
+  createdAt    DateTime  @default(now())
 
   @@index([syncJobId, resolvedAt])
   @@index([syncJobId, kind])

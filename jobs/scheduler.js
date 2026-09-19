@@ -4,11 +4,15 @@ import { logger } from '../lib/logger.js';
 import { dueSources, scheduleNextRun, enqueueJob, JobConflictError, PlanLimitError } from '../services/job-service.js';
 
 /**
- * Scheduler: `npm run scheduler`.
+ * Scheduler.
  *
- * Queues jobs for sources whose next run is due. It only enqueues — the worker
- * executes. A source that already has a job in flight is skipped and its next
- * run is pushed forward, so a slow sync cannot pile up behind itself.
+ * `sweep()` is the useful part and is called by /api/jobs/run on every Vercel
+ * Cron tick. The loop below (`npm run scheduler`) is only for self-hosted
+ * deployments that run their own processes.
+ *
+ * It only enqueues — the runner executes. A source that already has a job in
+ * flight is skipped and its next run pushed forward, so a slow sync cannot
+ * pile up behind itself.
  */
 
 const TICK_MS = Number(process.env.SCHEDULER_TICK_MS || 60_000);

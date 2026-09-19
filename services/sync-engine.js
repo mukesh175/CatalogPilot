@@ -71,8 +71,14 @@ export async function claimJob(jobId, workerId) {
   });
 }
 
-/** Releases a stale lock so a crashed worker's job can be retried. */
-export async function releaseStaleJobs(olderThanMs = 30 * 60 * 1000) {
+/**
+ * Releases a stale lock so a crashed worker's job can be retried.
+ *
+ * Ten minutes comfortably exceeds the longest a single invocation can hold a
+ * job (the function limit is five), so this only ever frees a lock left behind
+ * by a hard kill — never one that is still legitimately held.
+ */
+export async function releaseStaleJobs(olderThanMs = 10 * 60 * 1000) {
   const cutoff = new Date(Date.now() - olderThanMs);
   const { count } = await prisma.syncJob.updateMany({
     where: { status: 'RUNNING', lockedAt: { lt: cutoff } },
@@ -86,7 +92,7 @@ export async function releaseStaleJobs(olderThanMs = 30 * 60 * 1000) {
  * Phase 1 — build the plan.
  * Returns the summary shown on the preview screen.
  */
-export async function buildPlan(job, { workerId = 'inline' } = {}) {
+export async function buildPlan(job, { workerId = 'inline', deadline = null } = {}) {
   const log = logger.child({ jobId: job.id, shopId: job.shopId, phase: 'plan' });
   const source = job.dataSource;
   const sheet = source.sheets[0];
@@ -124,13 +130,37 @@ export async function buildPlan(job, { workerId = 'inline' } = {}) {
     allowImageUpdate: source.allowImageUpdate,
   };
 
+  // Resume support: a plan that yielded part-way through has already persisted
+  // items for the rows it got to, so those rows are skipped rather than
+  // re-planned. Row numbers are monotonic within a source, so the high-water
+  // mark is enough.
+  const [lastPlanned, plannedSkus] = await Promise.all([
+    prisma.syncJobItem.findFirst({
+      where: { syncJobId: job.id },
+      orderBy: { rowNumber: 'desc' },
+      select: { rowNumber: true },
+    }),
+    prisma.syncJobItem.findMany({
+      where: { syncJobId: job.id, sku: { not: null } },
+      select: { sku: true },
+    }),
+  ]);
+  const resumeAfterRow = lastPlanned?.rowNumber ?? 0;
+
   let processed = 0;
   let planned = [];
+  let reachedEnd = true;
   const counts = { create: 0, update: 0, unchanged: 0, error: 0 };
-  const seenSkus = new Set();
+  const seenSkus = new Set(plannedSkus.map((i) => i.sku.toLowerCase()));
 
   for await (const row of readRows(source, sheet)) {
+    if (row.rowNumber <= resumeAfterRow) continue;
     if (await isCancelled(job.id)) break;
+
+    if (deadline && Date.now() >= deadline) {
+      reachedEnd = false;
+      break;
+    }
 
     let item;
     try {
@@ -219,11 +249,14 @@ export async function buildPlan(job, { workerId = 'inline' } = {}) {
       updatedCount: summary.update,
       unchangedCount: summary.unchanged,
       failedCount: summary.error,
+      // Only mark the plan complete when the source was read all the way to
+      // the end; otherwise the next invocation continues from here.
+      planCompletedAt: reachedEnd ? new Date() : null,
     },
   });
 
-  log.info('sync.plan_built', { rows: summary.total, ...counts });
-  return summary;
+  log.info(reachedEnd ? 'sync.plan_built' : 'sync.plan_paused', { rows: summary.total, ...counts });
+  return { ...summary, incomplete: !reachedEnd };
 }
 
 /**
@@ -319,7 +352,7 @@ async function persistItems(jobId, items) {
  * Phase 2 — apply the plan.
  * Only items the merchant approved (PENDING, CREATE/UPDATE) are applied.
  */
-export async function applyPlan(job, { workerId = 'inline', onlyItemIds = null } = {}) {
+export async function applyPlan(job, { workerId = 'inline', onlyItemIds = null, deadline = null } = {}) {
   const log = logger.child({ jobId: job.id, shopId: job.shopId, phase: 'apply' });
   const source = job.dataSource;
   const sheet = source.sheets[0];
@@ -371,11 +404,12 @@ export async function applyPlan(job, { workerId = 'inline', onlyItemIds = null }
 
   if (pendingItems.length === 0) {
     log.info('sync.nothing_to_apply', {});
-    return counts;
+    return { ...counts, incomplete: false };
   }
 
   const itemsByRow = new Map(pendingItems.map((item) => [item.rowNumber, item]));
   const seenRows = new Set();
+  let reachedEnd = true;
 
   // Rows are re-read from the source so the apply step works from the same
   // data the plan did, and re-planned so a store edit made since the preview
@@ -383,6 +417,13 @@ export async function applyPlan(job, { workerId = 'inline', onlyItemIds = null }
   {
     for await (const row of readRows(source, sheet)) {
       if (await isCancelled(job.id)) break;
+
+      // Stopping on the deadline leaves every unprocessed item PENDING, so the
+      // next invocation resumes exactly here.
+      if (deadline && Date.now() >= deadline) {
+        reachedEnd = false;
+        break;
+      }
 
       const item = itemsByRow.get(row.rowNumber);
       if (!item) continue;
@@ -445,24 +486,40 @@ export async function applyPlan(job, { workerId = 'inline', onlyItemIds = null }
 
   // Anything the stream never reached was deleted from the sheet between the
   // preview and now. Skipping is the safe outcome: the product stays as it is.
-  for (const item of pendingItems) {
-    if (seenRows.has(item.rowNumber)) continue;
-    await markSkipped(item.id, 'That row is no longer in the source.');
-    counts.skipped += 1;
+  // This only holds when the source was read to the end — after an early stop,
+  // the unreached items are simply not done yet.
+  if (reachedEnd) {
+    for (const item of pendingItems) {
+      if (seenRows.has(item.rowNumber)) continue;
+      await markSkipped(item.id, 'That row is no longer in the source.');
+      counts.skipped += 1;
+    }
   }
+
+  // Totals are recounted from the items rather than from this invocation's
+  // tallies, so a job spread across several invocations reports the whole run
+  // instead of only its last slice.
+  const [created, updated, skipped, failed] = await Promise.all([
+    prisma.syncJobItem.count({ where: { syncJobId: job.id, status: 'APPLIED', action: 'CREATE' } }),
+    prisma.syncJobItem.count({ where: { syncJobId: job.id, status: 'APPLIED', action: 'UPDATE' } }),
+    prisma.syncJobItem.count({ where: { syncJobId: job.id, status: 'SKIPPED' } }),
+    prisma.syncJobItem.count({ where: { syncJobId: job.id, status: 'FAILED' } }),
+  ]);
 
   await prisma.syncJob.update({
     where: { id: job.id },
     data: {
-      createdCount: counts.created,
-      updatedCount: counts.updated,
-      skippedCount: counts.skipped,
-      failedCount: counts.failed,
+      createdCount: created,
+      updatedCount: updated,
+      skippedCount: skipped,
+      failedCount: failed,
+      processedRows: created + updated + skipped + failed,
     },
   });
 
-  log.info('sync.applied', counts);
-  return counts;
+  const totals = { created, updated, skipped, failed };
+  log.info(reachedEnd ? 'sync.applied' : 'sync.apply_paused', { ...totals, thisRun: counts });
+  return { ...totals, incomplete: !reachedEnd };
 }
 
 async function resolveExistingForApply(admin, item, row, headers, mappings, log) {
