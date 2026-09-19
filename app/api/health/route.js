@@ -16,11 +16,14 @@ export async function GET() {
     checks.database = true;
   } catch (error) {
     checks.database = false;
-    // The Prisma error code, never the connection string — that carries the
-    // password. The code alone says which of the usual causes it is.
+    // PrismaClientInitializationError carries its code on `errorCode`, not
+    // `code` — reading only `code` hides exactly the detail that identifies
+    // the cause.
+    const code = error?.errorCode || error?.code || null;
     databaseError = {
-      code: error?.code || error?.name || 'unknown',
-      hint: databaseHint(error),
+      code: code || error?.name || 'unknown',
+      hint: databaseHint(code, error),
+      detail: sanitize(error?.message),
     };
   }
 
@@ -35,9 +38,30 @@ export async function GET() {
   );
 }
 
+/**
+ * A short, safe excerpt of the driver's own message.
+ *
+ * Credentials are stripped first: a connection error frequently quotes the URL
+ * back, and that URL contains the database password.
+ */
+function sanitize(message) {
+  if (!message) return null;
+  return String(message)
+    .replace(/\/\/[^@\s]+@/g, '//[credentials]@')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 200);
+}
+
 /** Turns a Prisma connection error into the thing to go and check. */
-function databaseHint(error) {
-  switch (error?.code) {
+function databaseHint(code, error) {
+  // Prisma does not always attach a code to an initialization failure, so the
+  // message is the only signal left.
+  if (!code && /scheme is not recognized|invalid.*connection string/i.test(error?.message || '')) {
+    return 'DATABASE_URL is malformed. It must begin with postgresql:// exactly — check for a stray character at the start.';
+  }
+
+  switch (code) {
     case 'P1000':
       return 'The database rejected the username or password in DATABASE_URL.';
     case 'P1001':
