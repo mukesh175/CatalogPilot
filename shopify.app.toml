@@ -60,4 +60,3 @@ api_version = "2026-07"
 embedded = false
 
 [build]
-include_config_on_deploy = true

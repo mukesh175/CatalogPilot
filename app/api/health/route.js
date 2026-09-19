@@ -9,17 +9,47 @@ import { json } from '../../../lib/api.js';
  */
 export async function GET() {
   const checks = { env: envIsConfigured(), database: false };
+  let databaseError = null;
 
   try {
     await prisma.$queryRaw`SELECT 1`;
     checks.database = true;
-  } catch {
+  } catch (error) {
     checks.database = false;
+    // The Prisma error code, never the connection string — that carries the
+    // password. The code alone says which of the usual causes it is.
+    databaseError = {
+      code: error?.code || error?.name || 'unknown',
+      hint: databaseHint(error),
+    };
   }
 
   const healthy = Object.values(checks).every(Boolean);
   return json(
-    { status: healthy ? 'ok' : 'degraded', checks, version: process.env.npm_package_version || null },
+    {
+      status: healthy ? 'ok' : 'degraded',
+      checks,
+      ...(databaseError ? { database: databaseError } : {}),
+    },
     { status: healthy ? 200 : 503 }
   );
+}
+
+/** Turns a Prisma connection error into the thing to go and check. */
+function databaseHint(error) {
+  switch (error?.code) {
+    case 'P1000':
+      return 'The database rejected the username or password in DATABASE_URL.';
+    case 'P1001':
+      return 'The database host in DATABASE_URL is unreachable. Check the host name and that the Neon project is not deleted.';
+    case 'P1002':
+    case 'P1008':
+      return 'The database did not answer in time. A Neon compute that has scaled to zero needs connect_timeout=15 in DATABASE_URL.';
+    case 'P1003':
+      return 'That database name does not exist on the server.';
+    case 'P1013':
+      return 'DATABASE_URL is malformed. It must begin with postgresql:// exactly.';
+    default:
+      return 'Check DATABASE_URL, and that migrations have been applied.';
+  }
 }
