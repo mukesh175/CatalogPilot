@@ -57,8 +57,12 @@ function sanitize(message) {
 function databaseHint(code, error) {
   // Prisma does not always attach a code to an initialization failure, so the
   // message is the only signal left.
-  if (!code && /scheme is not recognized|invalid.*connection string/i.test(error?.message || '')) {
-    return 'DATABASE_URL is malformed. It must begin with postgresql:// exactly — check for a stray character at the start.';
+  const malformed =
+    /scheme is not recognized|invalid.*connection string|must start with the protocol/i.test(
+      error?.message || ''
+    );
+  if (malformed) {
+    return 'DATABASE_URL is malformed. It must begin with postgresql:// exactly — check for a stray character at the start, such as "ppostgresql://".';
   }
 
   switch (code) {
