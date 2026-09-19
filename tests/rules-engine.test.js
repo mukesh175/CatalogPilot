@@ -342,3 +342,136 @@ describe('applyCollectionRules', () => {
     expect(applyCollectionRules([], {})).toBeNull();
   });
 });
+
+/**
+ * The worked examples shown on the rules screens.
+ *
+ * These numbers are printed to merchants as fact in RulesScreen's
+ * KIND_CONFIG[...].examples, so they are pinned here. If the engine's
+ * behaviour changes, this fails rather than the UI quietly starting to lie.
+ */
+describe('examples shown in the UI', () => {
+  const rule = (config, overrides = {}) => ({
+    kind: 'PRICE',
+    name: 'Example',
+    isEnabled: true,
+    priority: 100,
+    conditions: { operator: 'AND', clauses: [] },
+    priceRule: { targetField: 'variant.price', ...config },
+    ...overrides,
+  });
+
+  const markup = (factor) => ({ op: '*', left: { field: 'variant.cost' }, right: { value: factor } });
+
+  it('"Supplier cost 500, cost x 1.40" gives 700', () => {
+    const result = applyPriceRules([rule({ expression: markup(1.4) })], { 'variant.cost': 500 });
+    expect(result.value).toBe(700);
+  });
+
+  it('"Supplier cost 500, cost x 1.40 rounded to end in 99" gives 799', () => {
+    const result = applyPriceRules(
+      [rule({ expression: markup(1.4), roundingMode: 'ENDING', endingValue: 99 })],
+      { 'variant.cost': 500 }
+    );
+    expect(result.value).toBe(799);
+  });
+
+  it('"Supplier cost 1,000 plus 18% GST" gives 1,180', () => {
+    const expression = { op: '%', left: { field: 'variant.cost' }, right: { value: 18 } };
+    const result = applyPriceRules([rule({ expression })], { 'variant.cost': 1000 });
+    expect(result.value).toBe(1180);
+  });
+
+  it('"Supplier cost 200, cost x 1.40 with a minimum of 499" gives 499', () => {
+    const result = applyPriceRules([rule({ expression: markup(1.4), minPrice: 499 })], {
+      'variant.cost': 200,
+    });
+    expect(result.value).toBe(499);
+  });
+
+  it('"Supplier stock 20, hold back 3" gives 17', () => {
+    const inventoryRule = {
+      kind: 'INVENTORY',
+      name: 'Example',
+      isEnabled: true,
+      priority: 100,
+      conditions: { operator: 'AND', clauses: [] },
+      inventoryRule: { safetyStock: 3 },
+    };
+    expect(applyInventoryRules([inventoryRule], {}, { supplierQuantity: 20 }).quantity).toBe(17);
+  });
+
+  it('"Supplier stock 2, anything under 5 is zero" gives 0', () => {
+    const inventoryRule = {
+      kind: 'INVENTORY',
+      name: 'Example',
+      isEnabled: true,
+      priority: 100,
+      conditions: { operator: 'AND', clauses: [] },
+      inventoryRule: { safetyStock: 0, minThreshold: 5, zeroOutBelowMin: true },
+    };
+    expect(applyInventoryRules([inventoryRule], {}, { supplierQuantity: 2 }).quantity).toBe(0);
+  });
+
+  it('"Brand Nike, Category Shoes" gives the tags nike and shoes', () => {
+    const tagRule = {
+      kind: 'TAG',
+      name: 'Example',
+      isEnabled: true,
+      priority: 100,
+      conditions: { operator: 'AND', clauses: [] },
+      tagRule: { sourceFields: ['product.vendor', 'product.productType'], staticTags: [], lowercase: true },
+    };
+    const result = applyTagRules([tagRule], {
+      'product.vendor': 'Nike',
+      'product.productType': 'Shoes',
+    });
+    expect(result.tags).toEqual(['nike', 'shoes']);
+  });
+
+  it('"already tagged sale in Shopify" keeps that tag alongside the new ones', () => {
+    const tagRule = {
+      kind: 'TAG',
+      name: 'Example',
+      isEnabled: true,
+      priority: 100,
+      conditions: { operator: 'AND', clauses: [] },
+      tagRule: { sourceFields: ['product.vendor', 'product.productType'], staticTags: [], lowercase: true },
+    };
+    const result = applyTagRules(
+      [tagRule],
+      { 'product.vendor': 'Nike', 'product.productType': 'Shoes' },
+      { existingTags: ['sale'] }
+    );
+    expect(result.tags).toEqual(['nike', 'sale', 'shoes']);
+  });
+
+  it('"Category T-Shirts renamed to Men’s T-Shirts" lands in that collection', () => {
+    const collectionRule = {
+      kind: 'COLLECTION',
+      name: 'Example',
+      isEnabled: true,
+      priority: 100,
+      conditions: { operator: 'AND', clauses: [] },
+      collectionRule: {
+        sourceField: 'product.productType',
+        valueMap: [{ from: 'T-Shirts', to: 'Men’s T-Shirts' }],
+      },
+    };
+    const result = applyCollectionRules([collectionRule], { 'product.productType': 'T-Shirts' });
+    expect(result.titles).toEqual(['Men’s T-Shirts']);
+  });
+
+  it('"Category Shirts, Formal" lands in both collections', () => {
+    const collectionRule = {
+      kind: 'COLLECTION',
+      name: 'Example',
+      isEnabled: true,
+      priority: 100,
+      conditions: { operator: 'AND', clauses: [] },
+      collectionRule: { sourceField: 'product.productType', valueMap: [] },
+    };
+    const result = applyCollectionRules([collectionRule], { 'product.productType': 'Shirts, Formal' });
+    expect(result.titles).toEqual(['Shirts', 'Formal']);
+  });
+});

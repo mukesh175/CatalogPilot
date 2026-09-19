@@ -22,6 +22,17 @@ const KIND_CONFIG = {
     emptyTitle: 'No price rules yet',
     emptyBody:
       'Add a rule so CatalogPilot can work out your selling price from the supplier cost — for example cost × 1.4, rounded to a price ending in 99.',
+    examples: [
+      { given: 'Supplier cost 500', rule: 'Cost × 1.40', result: 'Price 700' },
+      { given: 'Supplier cost 500', rule: 'Cost × 1.40, rounded to end in 99', result: 'Price 799' },
+      { given: 'Supplier cost 1,000', rule: 'Cost + 18% GST', result: 'Price 1,180' },
+      { given: 'Supplier cost 200', rule: 'Cost × 1.40, with a minimum of 499', result: 'Price 499' },
+      {
+        given: 'Category is Electronics',
+        rule: 'IF category = Electronics THEN cost × 1.25',
+        result: 'A lower markup than the rest of the catalog',
+      },
+    ],
     defaults: () => ({
       kind: 'PRICE',
       name: 'New price rule',
@@ -45,6 +56,12 @@ const KIND_CONFIG = {
     emptyTitle: 'No inventory rules yet',
     emptyBody:
       'Add a rule to hold back safety stock, zero out low quantities, or draft products automatically when they sell out.',
+    examples: [
+      { given: 'Supplier stock 20', rule: 'Hold back 3 as safety stock', result: 'Shopify inventory 17' },
+      { given: 'Supplier stock 2', rule: 'Treat anything under 5 as zero', result: 'Shopify inventory 0' },
+      { given: 'Supplier stock 0', rule: 'Draft the product at zero stock', result: 'Product moves to draft' },
+      { given: 'Supplier stock back to 12', rule: 'Activate when back in stock', result: 'Product goes live again' },
+    ],
     defaults: () => ({
       kind: 'INVENTORY',
       name: 'New inventory rule',
@@ -67,6 +84,20 @@ const KIND_CONFIG = {
     emptyTitle: 'No collection rules yet',
     emptyBody:
       'Add a rule to place products into collections automatically — for example “T-Shirts” in your sheet becoming “Men’s T-Shirts” in Shopify.',
+    examples: [
+      { given: 'Category is T-Shirts', rule: 'T-Shirts → Men’s T-Shirts', result: 'Added to Men’s T-Shirts' },
+      { given: 'Category is Jeans', rule: 'Jeans → Men’s Jeans', result: 'Added to Men’s Jeans' },
+      {
+        given: 'Category is “Shirts, Formal”',
+        rule: 'One product, two categories',
+        result: 'Added to both collections',
+      },
+      {
+        given: 'Category is Hats, with no rename set',
+        rule: 'Unlisted values pass through',
+        result: 'Added to Hats',
+      },
+    ],
     defaults: () => ({
       kind: 'COLLECTION',
       name: 'New collection rule',
@@ -87,6 +118,15 @@ const KIND_CONFIG = {
     emptyTitle: 'No tag rules yet',
     emptyBody:
       'Add a rule to tag products automatically from their brand, category or supplier — for example “nike, shoes”.',
+    examples: [
+      { given: 'Brand Nike, Category Shoes', rule: 'Tag from brand and category', result: 'Tags: nike, shoes' },
+      { given: 'Any product', rule: 'Always add “imported”', result: 'Tags: imported' },
+      {
+        given: 'Product already tagged “sale” in Shopify',
+        rule: 'Add to existing tags (the default)',
+        result: 'Tags: sale, nike, shoes',
+      },
+    ],
     defaults: () => ({
       kind: 'TAG',
       name: 'New tag rule',
@@ -188,6 +228,8 @@ export function RulesScreen({ kind }) {
 
       {error ? <Banner tone="critical">{error.message}</Banner> : null}
 
+      {!editing ? <RuleExamples title={config.title} examples={config.examples} /> : null}
+
       {editing ? (
         <RuleEditor
           rule={editing}
@@ -279,6 +321,70 @@ export function RulesScreen({ kind }) {
         </Banner>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * Worked examples for the rule type on screen.
+ *
+ * A rule builder is abstract until you see what it does to a real row, so each
+ * example reads left to right: what the sheet says, what the rule is, and what
+ * ends up in Shopify. Collapsed once the merchant has rules of their own, since
+ * by then they have their own examples.
+ */
+function RuleExamples({ title, examples }) {
+  const [open, setOpen] = useState(false);
+
+  if (!examples?.length) return null;
+
+  return (
+    <Card
+      title={`How ${title.toLowerCase()} work`}
+      actions={
+        <button
+          type="button"
+          className="cp-btn cp-btn-sm"
+          aria-expanded={open}
+          onClick={() => setOpen((value) => !value)}
+        >
+          {open ? 'Hide examples' : 'Show examples'}
+        </button>
+      }
+      padded={false}
+    >
+      {open ? (
+        <div className="cp-table-wrap">
+          <table className="cp-table">
+            <caption className="cp-visually-hidden">Examples of {title.toLowerCase()}</caption>
+            <thead>
+              <tr>
+                <th scope="col">Your sheet says</th>
+                <th scope="col">The rule</th>
+                <th scope="col">What happens in Shopify</th>
+              </tr>
+            </thead>
+            <tbody>
+              {examples.map((example, index) => (
+                <tr key={index}>
+                  <td className="cp-subdued">{example.given}</td>
+                  <td>
+                    <Badge tone="info">{example.rule}</Badge>
+                  </td>
+                  <td style={{ fontWeight: 550 }}>{example.result}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className="cp-card-body" style={{ paddingTop: 12, paddingBottom: 12 }}>
+          <span className="cp-subdued" style={{ fontSize: 13 }}>
+            {examples[0].given} → <strong>{examples[0].result}</strong>, and {examples.length - 1} more
+            example{examples.length > 2 ? 's' : ''}.
+          </span>
+        </div>
+      )}
+    </Card>
   );
 }
 
