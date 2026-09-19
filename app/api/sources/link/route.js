@@ -8,6 +8,7 @@ import {
   serviceAccountEmail,
   serviceAccountConfigured,
 } from '../../../../lib/google/service-account.js';
+import { googleOAuthEnabled } from '../../../../lib/google/oauth.js';
 import { z } from 'zod';
 
 /**
@@ -27,6 +28,8 @@ export const GET = withAuth(async () =>
       shareWith: serviceAccountEmail(),
     },
     csvUrl: { available: true },
+    // Hidden until Google verifies the app; see googleOAuthEnabled().
+    googleAccount: { available: googleOAuthEnabled() },
   })
 );
 

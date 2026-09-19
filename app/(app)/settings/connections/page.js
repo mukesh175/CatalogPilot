@@ -10,6 +10,10 @@ export default function ConnectionsPage() {
   const toast = useToast();
   const confirm = useConfirm();
   const { data, loading, error, refresh } = useApi('/api/settings/connections');
+  // Google sign-in is hidden until Google has verified the app; the server is
+  // the single source of truth for that.
+  const { data: capabilities } = useApi('/api/sources/link');
+  const googleAvailable = capabilities?.googleAccount?.available;
   const [connecting, setConnecting] = useState(false);
 
   const connectGoogle = async () => {
@@ -69,6 +73,7 @@ export default function ConnectionsPage() {
         ) : null}
       </Card>
 
+      {googleAvailable ? (
       <Card
         title="Google"
         actions={
@@ -128,6 +133,25 @@ export default function ConnectionsPage() {
           select. Tokens are encrypted before they are stored.
         </p>
       </Card>
+      ) : null}
+
+      {capabilities?.shared?.available ? (
+        <Card title="Shared sheets">
+          <p className="cp-subdued">
+            Share a Google Sheet with the address below and CatalogPilot can read it — no sign-in, and
+            nothing else in your Drive is visible.
+          </p>
+          <div
+            className="cp-spread p-3"
+            style={{ background: 'var(--cp-surface-sunken)', borderRadius: 'var(--cp-radius)' }}
+          >
+            <code className="cp-mono" style={{ wordBreak: 'break-all' }}>
+              {capabilities.shared.shareWith}
+            </code>
+            <Badge tone="success">Read only</Badge>
+          </div>
+        </Card>
+      ) : null}
     </div>
   );
 }

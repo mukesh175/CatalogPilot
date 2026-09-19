@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { api, formatDate, formatNumber } from '../../lib/client-api.js';
 import { useToast } from '../../components/AppProviders.jsx';
+import { useApi } from '../../lib/use-api.js';
 import { StepIndicator } from '../../components/onboarding/Steps.jsx';
 import { MappingTable } from '../../components/MappingTable.jsx';
 import { PreviewTable } from '../../components/PreviewTable.jsx';
@@ -223,7 +224,10 @@ function OnboardingWizard() {
 }
 
 function WelcomeStep({ onConnect, onLinkConnected, busy }) {
-  const [showGoogleAccount, setShowGoogleAccount] = useState(false);
+  // The server decides whether signing in with Google is offered at all; it is
+  // hidden until Google has verified the app.
+  const { data: capabilities } = useApi('/api/sources/link');
+  const googleAccountAvailable = capabilities?.googleAccount?.available;
 
   return (
     <div className="cp-stack">
@@ -265,29 +269,22 @@ function WelcomeStep({ onConnect, onLinkConnected, busy }) {
             </Link>
           </div>
 
-          <hr />
-
-          <div className="cp-spread flex-wrap gap-2">
-            <div>
-              <strong style={{ fontSize: 13.5 }}>Sign in with Google and pick from your Drive</strong>
-              <div className="cp-subdued" style={{ fontSize: 12.5 }}>
-                Requires Google to finish reviewing this app. Until then only approved testers can use it.
+          {googleAccountAvailable ? (
+            <>
+              <hr />
+              <div className="cp-spread flex-wrap gap-2">
+                <div>
+                  <strong style={{ fontSize: 13.5 }}>Sign in with Google and pick from your Drive</strong>
+                  <div className="cp-subdued" style={{ fontSize: 12.5 }}>
+                    Browse the spreadsheets in your Drive and choose one.
+                  </div>
+                </div>
+                <button type="button" className="cp-btn cp-btn-sm" onClick={onConnect} disabled={busy}>
+                  {busy ? 'Opening Google…' : 'Sign in with Google'}
+                </button>
               </div>
-            </div>
-            {showGoogleAccount ? (
-              <button type="button" className="cp-btn cp-btn-sm" onClick={onConnect} disabled={busy}>
-                {busy ? 'Opening Google…' : 'Continue anyway'}
-              </button>
-            ) : (
-              <button
-                type="button"
-                className="cp-btn cp-btn-sm"
-                onClick={() => setShowGoogleAccount(true)}
-              >
-                Show anyway
-              </button>
-            )}
-          </div>
+            </>
+          ) : null}
         </div>
       </Card>
     </div>
