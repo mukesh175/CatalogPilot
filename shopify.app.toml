@@ -1,0 +1,60 @@
+#  CatalogPilot — Shopify app configuration
+#
+#  Replace client_id and the URLs with the values from your Partner dashboard
+#  (or run `shopify app config link`). Scopes here must match SHOPIFY_SCOPES in
+#  your environment — the app checks for drift on every request and prompts for
+#  reauthorization when they differ.
+
+name = "CatalogPilot"
+handle = "catalogpilot"
+client_id = "REPLACE_WITH_YOUR_CLIENT_ID"
+application_url = "https://your-tunnel-domain.example.com"
+embedded = true
+
+[access_scopes]
+# The minimum needed to read the catalog, write products and set inventory.
+# No customer, order or content scopes are requested.
+scopes = "read_products,write_products,read_inventory,write_inventory,read_locations"
+
+# Token exchange: the app asks for an access token using the App Bridge session
+# token rather than a redirect, which is Shopify's current recommendation.
+use_legacy_install_flow = false
+
+[auth]
+redirect_urls = [
+  "https://your-tunnel-domain.example.com/api/auth/shopify/callback",
+  "https://your-tunnel-domain.example.com/api/auth/google/callback"
+]
+
+[webhooks]
+api_version = "2026-07"
+
+  [[webhooks.subscriptions]]
+  topics = ["app/uninstalled"]
+  uri = "/api/webhooks"
+
+  [[webhooks.subscriptions]]
+  topics = ["app_subscriptions/update"]
+  uri = "/api/webhooks"
+
+  [[webhooks.subscriptions]]
+  topics = ["shop/update"]
+  uri = "/api/webhooks"
+
+  [[webhooks.subscriptions]]
+  topics = ["products/delete"]
+  uri = "/api/webhooks"
+
+  # Mandatory compliance topics.
+  [webhooks.privacy_compliance]
+  customer_data_request_url = "https://your-tunnel-domain.example.com/api/webhooks"
+  customer_deletion_url = "https://your-tunnel-domain.example.com/api/webhooks"
+  shop_deletion_url = "https://your-tunnel-domain.example.com/api/webhooks"
+
+# No app proxy: CatalogPilot has no storefront surface.
+
+[pos]
+embedded = false
+
+[build]
+include_config_on_deploy = true

@@ -1,0 +1,590 @@
+// CatalogPilot — data model
+// Every tenant-scoped row hangs off Shop. Nothing is queried without a shopId
+// filter derived from the authenticated session (see lib/tenant.js).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------- enums
+
+enum PlanTier {
+  FREE
+  STARTER
+  GROWTH
+  PRO
+}
+
+enum SubscriptionStatus {
+  PENDING
+  ACTIVE
+  CANCELLED
+  EXPIRED
+  FROZEN
+  DECLINED
+}
+
+enum DataSourceKind {
+  GOOGLE_SHEET
+  CSV
+  EXCEL
+}
+
+enum DataSourceStatus {
+  DRAFT
+  READY
+  ERROR
+  DISCONNECTED
+}
+
+enum SyncSchedule {
+  MANUAL
+  HOURLY
+  EVERY_6_HOURS
+  DAILY
+  WEEKLY
+}
+
+enum MappingConfidence {
+  EXACT
+  HIGH
+  MEDIUM
+  LOW
+  NEEDS_REVIEW
+}
+
+enum JobStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  COMPLETED_WITH_ERRORS
+  FAILED
+  CANCELLED
+}
+
+enum JobKind {
+  PREVIEW
+  SYNC
+}
+
+enum ItemAction {
+  CREATE
+  UPDATE
+  UNCHANGED
+  SKIP
+  ERROR
+}
+
+enum ItemStatus {
+  PENDING
+  APPLIED
+  FAILED
+  SKIPPED
+}
+
+enum ErrorKind {
+  VALIDATION
+  MAPPING
+  IMAGE
+  RATE_LIMIT
+  SHOPIFY_API
+  GOOGLE_API
+  PERMISSION
+  PLAN_LIMIT
+  UNKNOWN
+}
+
+enum RuleKind {
+  PRICE
+  INVENTORY
+  COLLECTION
+  TAG
+  VENDOR
+  STATUS
+}
+
+enum ProductStatus {
+  ACTIVE
+  DRAFT
+  ARCHIVED
+}
+
+// ---------------------------------------------------------------- tenancy
+
+model Shop {
+  id                String    @id @default(cuid())
+  domain            String    @unique // foo.myshopify.com
+  name              String?
+  email             String?
+  countryCode       String?
+  currencyCode      String    @default("USD")
+  primaryLocationId String? // Shopify inventory location GID
+  installedAt       DateTime  @default(now())
+  uninstalledAt     DateTime?
+  isActive          Boolean   @default(true)
+  onboardingStep    Int       @default(0)
+  onboardingDone    Boolean   @default(false)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  users              User[]
+  sessions           ShopifySession[]
+  googleConnections  GoogleConnection[]
+  dataSources        DataSource[]
+  syncRules          SyncRule[]
+  syncJobs           SyncJob[]
+  syncHistory        SyncHistory[]
+  productMappings    ProductMapping[]
+  variantMappings    VariantMapping[]
+  collectionMappings CollectionMapping[]
+  subscription       BillingSubscription?
+  notification       NotificationSetting?
+
+  @@index([isActive])
+}
+
+model User {
+  id            String   @id @default(cuid())
+  shopId        String
+  shop          Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  shopifyUserId String?
+  email         String?
+  firstName     String?
+  lastName      String?
+  locale        String?
+  isOwner       Boolean  @default(false)
+  lastSeenAt    DateTime @default(now())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  googleConnections GoogleConnection[]
+
+  @@unique([shopId, shopifyUserId])
+  @@index([shopId])
+}
+
+model ShopifySession {
+  id           String    @id @default(cuid())
+  shopId       String
+  shop         Shop      @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  sessionId    String    @unique // offline_<domain> / online_<uid>
+  isOnline     Boolean   @default(false)
+  state        String?
+  scope        String?
+  accessToken  String // encrypted at rest — see lib/crypto.js
+  expiresAt    DateTime?
+  onlineUserId String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([shopId, isOnline])
+}
+
+model GoogleConnection {
+  id            String    @id @default(cuid())
+  shopId        String
+  shop          Shop      @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  userId        String?
+  user          User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  googleUserId  String
+  email         String
+  accessToken   String // encrypted
+  refreshToken  String? // encrypted
+  scope         String
+  expiresAt     DateTime?
+  isRevoked     Boolean   @default(false)
+  lastCheckedAt DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  dataSources DataSource[]
+
+  @@unique([shopId, googleUserId])
+  @@index([shopId, isRevoked])
+}
+
+// ---------------------------------------------------------------- sources
+
+model DataSource {
+  id                 String            @id @default(cuid())
+  shopId             String
+  shop               Shop              @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  googleConnectionId String?
+  googleConnection   GoogleConnection? @relation(fields: [googleConnectionId], references: [id], onDelete: SetNull)
+
+  kind           DataSourceKind
+  status         DataSourceStatus @default(DRAFT)
+  name           String
+  spreadsheetId  String? // Google file id
+  fileUrl        String?
+  lastModifiedAt DateTime?
+
+  schedule  SyncSchedule @default(MANUAL)
+  nextRunAt DateTime?
+  lastRunAt DateTime?
+  isPaused  Boolean      @default(false)
+
+  // safety switches — off by default where destructive
+  allowBlankOverwrite Boolean @default(false)
+  allowStatusChange   Boolean @default(true)
+  allowImageUpdate    Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sheets          DataSourceSheet[]
+  uploadedRows    UploadedRow[]
+  mappings        ColumnMapping[]
+  rules           SyncRule[]
+  jobs            SyncJob[]
+  history         SyncHistory[]
+  productMappings ProductMapping[]
+
+  @@unique([shopId, kind, spreadsheetId])
+  @@index([shopId, status])
+  @@index([nextRunAt, isPaused])
+}
+
+model DataSourceSheet {
+  id           String     @id @default(cuid())
+  dataSourceId String
+  dataSource   DataSource @relation(fields: [dataSourceId], references: [id], onDelete: Cascade)
+  sheetId      String // Google worksheet gid, or "0" for flat files
+  title        String
+  headerRow    Int        @default(1)
+  rowCount     Int        @default(0)
+  columnCount  Int        @default(0)
+  headers      Json       @default("[]")
+  isSelected   Boolean    @default(false)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@unique([dataSourceId, sheetId])
+  @@index([dataSourceId, isSelected])
+}
+
+/// Staged rows for uploaded CSV/Excel sources. Google sources stream straight
+/// from the Sheets API and never land here.
+model UploadedRow {
+  id           String     @id @default(cuid())
+  dataSourceId String
+  dataSource   DataSource @relation(fields: [dataSourceId], references: [id], onDelete: Cascade)
+  rowNumber    Int
+  cells        Json
+  hash         String
+  createdAt    DateTime   @default(now())
+
+  @@unique([dataSourceId, rowNumber])
+  @@index([dataSourceId, rowNumber])
+}
+
+model ColumnMapping {
+  id           String            @id @default(cuid())
+  dataSourceId String
+  dataSource   DataSource        @relation(fields: [dataSourceId], references: [id], onDelete: Cascade)
+  sourceColumn String // raw header text
+  normalized   String // normalized header used for matching
+  targetField  String // shopify field key, e.g. "variant.price"
+  confidence   MappingConfidence @default(NEEDS_REVIEW)
+  score        Float             @default(0)
+  isConfirmed  Boolean           @default(false)
+  isIgnored    Boolean           @default(false)
+  transform    Json? // optional per-column transform config
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  // one source column maps to one target; each target consumed once per source
+  @@unique([dataSourceId, sourceColumn])
+  @@unique([dataSourceId, targetField])
+  @@index([dataSourceId, isConfirmed])
+}
+
+// ---------------------------------------------------------------- rules
+
+model SyncRule {
+  id           String      @id @default(cuid())
+  shopId       String
+  shop         Shop        @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  dataSourceId String?
+  dataSource   DataSource? @relation(fields: [dataSourceId], references: [id], onDelete: Cascade)
+
+  kind      RuleKind
+  name      String
+  priority  Int      @default(100)
+  isEnabled Boolean  @default(true)
+  // { operator: "AND"|"OR", clauses: [{ field, op, value }] }
+  conditions Json    @default("{\"operator\":\"AND\",\"clauses\":[]}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  priceRule      PriceRule?
+  inventoryRule  InventoryRule?
+  collectionRule CollectionRule?
+  tagRule        TagRule?
+
+  @@index([shopId, kind, isEnabled])
+  @@index([dataSourceId, kind, priority])
+}
+
+model PriceRule {
+  id         String   @id @default(cuid())
+  syncRuleId String   @unique
+  syncRule   SyncRule @relation(fields: [syncRuleId], references: [id], onDelete: Cascade)
+  // expression AST: { op, left, right } with leaves { field } or { value }
+  expression   Json
+  targetField  String   @default("variant.price") // or variant.compareAtPrice
+  roundingMode String? // NONE | NEAREST | UP | DOWN | ENDING
+  roundingTo   Decimal? @db.Decimal(12, 2)
+  endingValue  Decimal? @db.Decimal(12, 2) // e.g. 99 -> round to nearest x99
+  minPrice     Decimal? @db.Decimal(12, 2)
+  maxPrice     Decimal? @db.Decimal(12, 2)
+}
+
+model InventoryRule {
+  id                   String         @id @default(cuid())
+  syncRuleId           String         @unique
+  syncRule             SyncRule       @relation(fields: [syncRuleId], references: [id], onDelete: Cascade)
+  safetyStock          Int            @default(0)
+  minThreshold         Int? // below this, treat as zero
+  zeroOutBelowMin      Boolean        @default(false)
+  setStatusWhenZero    ProductStatus?
+  setStatusWhenInStock ProductStatus?
+  maxInventory         Int?
+}
+
+model CollectionRule {
+  id                 String   @id @default(cuid())
+  syncRuleId         String   @unique
+  syncRule           SyncRule @relation(fields: [syncRuleId], references: [id], onDelete: Cascade)
+  sourceField        String   @default("category")
+  createIfMissing    Boolean  @default(false)
+  // [{ from: "T-Shirts", to: "Mens T-Shirts" }]
+  valueMap           Json     @default("[]")
+  fallbackCollection String?
+}
+
+model TagRule {
+  id              String   @id @default(cuid())
+  syncRuleId      String   @unique
+  syncRule        SyncRule @relation(fields: [syncRuleId], references: [id], onDelete: Cascade)
+  sourceFields    Json     @default("[]") // ["brand","category"]
+  staticTags      Json     @default("[]")
+  lowercase       Boolean  @default(true)
+  replaceExisting Boolean  @default(false)
+}
+
+// ---------------------------------------------------------------- jobs
+
+model SyncJob {
+  id           String     @id @default(cuid())
+  shopId       String
+  shop         Shop       @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  dataSourceId String
+  dataSource   DataSource @relation(fields: [dataSourceId], references: [id], onDelete: Cascade)
+
+  kind   JobKind   @default(SYNC)
+  status JobStatus @default(QUEUED)
+  // idempotency: one key per (source, content snapshot, kind)
+  idempotencyKey  String    @unique
+  lockedAt        DateTime?
+  lockedBy        String?
+  startedAt       DateTime?
+  finishedAt      DateTime?
+  cancelRequested Boolean   @default(false)
+
+  totalRows      Int @default(0)
+  processedRows  Int @default(0)
+  createdCount   Int @default(0)
+  updatedCount   Int @default(0)
+  unchangedCount Int @default(0)
+  skippedCount   Int @default(0)
+  failedCount    Int @default(0)
+
+  triggeredBy String   @default("manual") // manual | schedule | webhook
+  message     String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  items   SyncJobItem[]
+  errors  SyncError[]
+  history SyncHistory?
+
+  @@index([shopId, status, createdAt])
+  @@index([dataSourceId, kind, createdAt])
+  @@index([status, lockedAt])
+}
+
+model SyncJobItem {
+  id        String  @id @default(cuid())
+  syncJobId String
+  syncJob   SyncJob @relation(fields: [syncJobId], references: [id], onDelete: Cascade)
+
+  rowNumber Int
+  rowHash   String
+  sku       String?
+  handle    String?
+  title     String?
+  action    ItemAction @default(UNCHANGED)
+  status    ItemStatus @default(PENDING)
+  // [{ field, current, incoming, ruleName, explanation }]
+  changes          Json      @default("[]")
+  warnings         Json      @default("[]")
+  shopifyProductId String?
+  shopifyVariantId String?
+  appliedAt        DateTime?
+  createdAt        DateTime  @default(now())
+
+  @@unique([syncJobId, rowNumber])
+  @@index([syncJobId, action])
+  @@index([syncJobId, status])
+  @@index([syncJobId, sku])
+}
+
+model SyncError {
+  id            String  @id @default(cuid())
+  syncJobId     String
+  syncJob       SyncJob @relation(fields: [syncJobId], references: [id], onDelete: Cascade)
+  syncJobItemId String?
+
+  kind       ErrorKind @default(UNKNOWN)
+  code       String?
+  // merchant-facing copy — never a raw stack trace
+  message      String
+  suggestion   String?
+  field        String?
+  sku          String?
+  rowNumber    Int?
+  productTitle String?
+  // developer detail, redacted before storage
+  detail      Json?
+  isRetryable Boolean   @default(false)
+  retryCount  Int       @default(0)
+  resolvedAt  DateTime?
+  ignoredAt   DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([syncJobId, resolvedAt])
+  @@index([syncJobId, kind])
+}
+
+model SyncHistory {
+  id           String     @id @default(cuid())
+  shopId       String
+  shop         Shop       @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  dataSourceId String
+  dataSource   DataSource @relation(fields: [dataSourceId], references: [id], onDelete: Cascade)
+  syncJobId    String     @unique
+  syncJob      SyncJob    @relation(fields: [syncJobId], references: [id], onDelete: Cascade)
+
+  startedAt   DateTime
+  finishedAt  DateTime
+  durationMs  Int
+  scanned     Int
+  created     Int
+  updated     Int
+  unchanged   Int
+  skipped     Int
+  failed      Int
+  status      JobStatus
+  triggeredBy String
+
+  @@index([shopId, startedAt])
+  @@index([dataSourceId, startedAt])
+}
+
+// ---------------------------------------------------------------- mappings
+
+model ProductMapping {
+  id           String      @id @default(cuid())
+  shopId       String
+  shop         Shop        @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  dataSourceId String?
+  dataSource   DataSource? @relation(fields: [dataSourceId], references: [id], onDelete: SetNull)
+
+  externalKey      String // stable key from the sheet (sku or handle)
+  shopifyProductId String // gid://shopify/Product/123
+  handle           String?
+  lastRowHash      String?
+  lastSyncedAt     DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  variants VariantMapping[]
+
+  @@unique([shopId, externalKey])
+  @@unique([shopId, shopifyProductId])
+  @@index([shopId, lastSyncedAt])
+}
+
+model VariantMapping {
+  id               String         @id @default(cuid())
+  shopId           String
+  shop             Shop           @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  productMappingId String
+  productMapping   ProductMapping @relation(fields: [productMappingId], references: [id], onDelete: Cascade)
+
+  sku              String
+  shopifyVariantId String
+  inventoryItemId  String?
+  lastRowHash      String?
+  lastSyncedAt     DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@unique([shopId, sku])
+  @@unique([shopId, shopifyVariantId])
+  @@index([productMappingId])
+}
+
+model CollectionMapping {
+  id                  String   @id @default(cuid())
+  shopId              String
+  shop                Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  sourceValue         String // "T-Shirts"
+  shopifyCollectionId String // gid://shopify/Collection/123
+  title               String
+  createdByApp        Boolean  @default(false)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@unique([shopId, sourceValue])
+  @@index([shopId, shopifyCollectionId])
+}
+
+// ---------------------------------------------------------------- billing / prefs
+
+model BillingSubscription {
+  id               String             @id @default(cuid())
+  shopId           String             @unique
+  shop             Shop               @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  plan             PlanTier           @default(FREE)
+  status           SubscriptionStatus @default(ACTIVE)
+  shopifyChargeId  String?            @unique
+  confirmationUrl  String?
+  currentPeriodEnd DateTime?
+  trialEndsAt      DateTime?
+  cancelledAt      DateTime?
+  test             Boolean            @default(false)
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  @@index([status])
+}
+
+model NotificationSetting {
+  id                  String   @id @default(cuid())
+  shopId              String   @unique
+  shop                Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  email               String?
+  onSyncCompleted     Boolean  @default(false)
+  onSyncFailed        Boolean  @default(true)
+  onAttentionRequired Boolean  @default(true)
+  onConnectionExpired Boolean  @default(true)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+}
