@@ -23,6 +23,9 @@ export const GET = withAuth(async (request, { shopId }) => {
       productTitle: error.productTitle,
       isRetryable: error.isRetryable,
       retryCount: error.retryCount,
+      // Redacted at write time in describeError; shown behind a disclosure so
+      // the primary message stays plain English.
+      detail: error.detail || null,
       createdAt: error.createdAt,
       job: { id: error.syncJob.id, at: error.syncJob.createdAt },
       source: error.syncJob.dataSource,

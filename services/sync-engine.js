@@ -888,6 +888,8 @@ async function recordItemError(jobId, item, described) {
         sku: item.sku,
         rowNumber: item.rowNumber,
         productTitle: item.title,
+        // Kept so a failure can actually be diagnosed; redacted in describeError.
+        detail: described.detail ?? undefined,
         isRetryable: described.isRetryable ?? true,
       },
     }),

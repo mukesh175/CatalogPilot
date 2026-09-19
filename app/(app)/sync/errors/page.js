@@ -223,6 +223,7 @@ function ErrorCenter() {
                           {formatRelative(item.createdAt)}
                           {item.retryCount > 0 ? ` · retried ${item.retryCount}×` : ''}
                         </div>
+                        {item.detail ? <TechnicalDetail detail={item.detail} /> : null}
                       </td>
 
                       <td>
@@ -279,6 +280,67 @@ function ErrorCenter() {
           </>
         )}
       </Card>
+    </div>
+  );
+}
+
+/**
+ * What the API actually said, behind a disclosure.
+ *
+ * The plain-English message above is what a merchant should need. This is for
+ * the cases it does not cover: the first real sync failed with nothing but
+ * "Shopify rejected this change", which was impossible to act on or report.
+ */
+function TechnicalDetail({ detail }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="mt-2">
+      <button
+        type="button"
+        className="cp-btn cp-btn-plain cp-btn-sm"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
+        {open ? 'Hide technical detail' : 'Technical detail'}
+      </button>
+
+      {open ? (
+        <div className="cp-explain mt-1">
+          {detail.operation ? (
+            <div className="cp-explain-step">
+              <span className="cp-subdued">Operation</span>
+              <span className="cp-mono">{detail.operation}</span>
+            </div>
+          ) : null}
+          {detail.code ? (
+            <div className="cp-explain-step">
+              <span className="cp-subdued">Code</span>
+              <span className="cp-mono">{detail.code}</span>
+            </div>
+          ) : null}
+          {detail.fields?.length ? (
+            <div className="cp-explain-step">
+              <span className="cp-subdued">Fields</span>
+              <span className="cp-mono">{detail.fields.join(', ')}</span>
+            </div>
+          ) : null}
+          {detail.message ? (
+            <div className="mt-2 cp-mono" style={{ wordBreak: 'break-word' }}>
+              {detail.message}
+            </div>
+          ) : null}
+          {detail.shopify?.length ? (
+            <ul className="cp-mono mt-2 mb-0 ps-3" style={{ fontSize: 12 }}>
+              {detail.shopify.map((entry, index) => (
+                <li key={index}>
+                  {(entry.field || []).join('.')} {entry.message}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

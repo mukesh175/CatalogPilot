@@ -117,9 +117,27 @@ export function describeError(error, context = {}) {
           message: pattern.message,
           suggestion: pattern.suggestion,
           isRetryable: pattern.isRetryable,
-          detail: { shopify: error.userErrors?.slice(0, 5) || null },
+          detail: technicalDetail(error),
         };
       }
+    }
+
+    // A GraphQL-level rejection: a value we sent was not the shape Shopify
+    // expects. Almost always a specific cell, so name the field if we have it.
+    if (error.code === 'INVALID_VARIABLE' || error.code === 'graphql_error') {
+      const field = error.fields?.[0] || null;
+      return {
+        ...base,
+        kind: 'SHOPIFY_API',
+        code: error.code,
+        field,
+        message: field
+          ? `Shopify would not accept the value for ${humanField(field)}.`
+          : 'Shopify would not accept one of the values on this row.',
+        suggestion: 'Open the technical detail below to see exactly what it objected to.',
+        isRetryable: false,
+        detail: technicalDetail(error),
+      };
     }
 
     if (error.code === 'throttled' || error.code === 'rate_limited') {
@@ -140,18 +158,47 @@ export function describeError(error, context = {}) {
       message: firstUserError(error) || 'Shopify rejected this change.',
       suggestion: 'Check the highlighted values in your sheet, then retry this row.',
       isRetryable: true,
-      detail: { shopify: error.userErrors?.slice(0, 5) || null },
+      detail: technicalDetail(error),
     };
   }
 
-  logger.error('error_center.untranslated', { error, ...context });
+  logger.error('error_center.untranslated', { error, ...context, stack: error?.stack });
   return {
     ...base,
     kind: 'UNKNOWN',
     message: 'Something went wrong while syncing this row.',
-    suggestion: 'Retry this row. If it keeps failing, contact support with the SKU.',
+    suggestion: 'Retry this row. If it keeps failing, open the technical detail below.',
     isRetryable: true,
+    detail: technicalDetail(error),
   };
+}
+
+/**
+ * A redacted, bounded record of what actually failed.
+ *
+ * The merchant-facing message stays plain English, but without this there is
+ * no way at all to find out what Shopify objected to — the first sync failure
+ * proved that, reporting only "Shopify rejected this change".
+ */
+function technicalDetail(error) {
+  return {
+    error: String(error?.name || 'Error'),
+    code: error?.code || null,
+    operation: error?.operation || null,
+    fields: error?.fields?.slice(0, 5) || [],
+    message: String(error?.message || '').slice(0, 500),
+    shopify: error?.userErrors?.slice(0, 5) || null,
+  };
+}
+
+/** Turns a GraphQL path like input.variants.0.price into readable words. */
+function humanField(path) {
+  const last = String(path)
+    .split('.')
+    .filter((part) => part && part !== 'input' && !/^\d+$/.test(part))
+    .pop();
+  if (!last) return 'one of the fields';
+  return last.replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase();
 }
 
 function firstUserError(error) {

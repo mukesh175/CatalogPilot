@@ -80,6 +80,7 @@ export async function runJob(jobId, { workerId = WORKER_ID, deadline = null } = 
         code: described.code || null,
         message: described.message,
         suggestion: described.suggestion || null,
+        detail: described.detail ?? undefined,
         isRetryable: described.isRetryable ?? true,
       },
     });
