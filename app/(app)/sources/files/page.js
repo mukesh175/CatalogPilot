@@ -20,7 +20,9 @@ export default function FileSourcesPage() {
   const [uploading, setUploading] = useState(false);
   const [dragging, setDragging] = useState(false);
 
-  const sources = (data?.sources || []).filter((source) => source.kind !== 'GOOGLE_SHEET');
+  const sources = (data?.sources || []).filter((source) =>
+    ['CSV', 'EXCEL', 'CSV_URL'].includes(source.kind)
+  );
 
   const upload = async (file) => {
     if (!file) return;

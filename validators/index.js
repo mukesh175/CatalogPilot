@@ -25,6 +25,18 @@ export const connectSheetSchema = z.object({
   modifiedAt: z.string().optional(),
 });
 
+/** A sheet shared with the service account: the merchant pastes its link. */
+export const connectSharedSheetSchema = z.object({
+  link: z.string().min(10).max(500),
+  name: z.string().min(1).max(200).optional(),
+});
+
+/** A published CSV link. The URL is re-validated server-side before fetching. */
+export const connectCsvUrlSchema = z.object({
+  url: z.string().url().max(1000),
+  name: z.string().min(1).max(200).optional(),
+});
+
 export const selectWorksheetSchema = z.object({
   sheetId: z.string().min(1).max(64),
   title: z.string().min(1).max(200),

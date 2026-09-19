@@ -1,5 +1,5 @@
 import { google } from 'googleapis';
-import { authorizedClient, translateGoogleError } from '../lib/google/oauth.js';
+import { translateGoogleError } from '../lib/google/oauth.js';
 import { hashRow } from '../lib/crypto.js';
 import { logger } from '../lib/logger.js';
 
@@ -15,9 +15,8 @@ const ROW_PAGE_SIZE = 500;
 const MAX_COLUMNS = 200;
 
 /** Lists spreadsheets the connected account can open, newest first. */
-export async function listSpreadsheets(connection, { pageToken, query } = {}) {
+export async function listSpreadsheets(auth, { pageToken, query } = {}) {
   try {
-    const auth = await authorizedClient(connection);
     const drive = google.drive({ version: 'v3', auth });
 
     const nameFilter = query ? ` and name contains '${escapeDriveQuery(query)}'` : '';
@@ -53,9 +52,8 @@ function escapeDriveQuery(value) {
 }
 
 /** Returns worksheet metadata for a spreadsheet. */
-export async function listWorksheets(connection, spreadsheetId) {
+export async function listWorksheets(auth, spreadsheetId) {
   try {
-    const auth = await authorizedClient(connection);
     const sheets = google.sheets({ version: 'v4', auth });
 
     const { data } = await sheets.spreadsheets.get({
@@ -81,9 +79,8 @@ export async function listWorksheets(connection, spreadsheetId) {
  * Reads the header row plus a small sample of data rows.
  * Used by the mapping step — never for the sync itself.
  */
-export async function readHeaderAndSample(connection, { spreadsheetId, sheetTitle, headerRow = 1, sampleSize = 5 }) {
+export async function readHeaderAndSample(auth, { spreadsheetId, sheetTitle, headerRow = 1, sampleSize = 5 }) {
   try {
-    const auth = await authorizedClient(connection);
     const sheets = google.sheets({ version: 'v4', auth });
 
     const lastRow = headerRow + sampleSize;
@@ -110,8 +107,7 @@ export async function readHeaderAndSample(connection, { spreadsheetId, sheetTitl
  * Yields { rowNumber, cells, hash } so callers can skip unchanged rows without
  * holding the sheet in memory.
  */
-export async function* streamRows(connection, { spreadsheetId, sheetTitle, headerRow = 1, headerCount }) {
-  const auth = await authorizedClient(connection);
+export async function* streamRows(auth, { spreadsheetId, sheetTitle, headerRow = 1, headerCount }) {
   const sheets = google.sheets({ version: 'v4', auth });
   const lastColumn = columnLetter(Math.min(headerCount || MAX_COLUMNS, MAX_COLUMNS));
 
@@ -146,9 +142,8 @@ export async function* streamRows(connection, { spreadsheetId, sheetTitle, heade
 }
 
 /** Counts data rows without transferring cell contents. */
-export async function countRows(connection, { spreadsheetId, sheetTitle, headerRow = 1 }) {
+export async function countRows(auth, { spreadsheetId, sheetTitle, headerRow = 1 }) {
   try {
-    const auth = await authorizedClient(connection);
     const sheets = google.sheets({ version: 'v4', auth });
     const { data } = await sheets.spreadsheets.values.get({
       spreadsheetId,
@@ -162,9 +157,8 @@ export async function countRows(connection, { spreadsheetId, sheetTitle, headerR
 }
 
 /** Writes a column of values back to the sheet (used by write-back features). */
-export async function writeColumn(connection, { spreadsheetId, sheetTitle, column, startRow, values }) {
+export async function writeColumn(auth, { spreadsheetId, sheetTitle, column, startRow, values }) {
   try {
-    const auth = await authorizedClient(connection);
     const sheets = google.sheets({ version: 'v4', auth });
     await sheets.spreadsheets.values.update({
       spreadsheetId,
@@ -179,9 +173,8 @@ export async function writeColumn(connection, { spreadsheetId, sheetTitle, colum
 }
 
 /** Returns the file's last modified timestamp, for incremental scheduling. */
-export async function getLastModified(connection, spreadsheetId) {
+export async function getLastModified(auth, spreadsheetId) {
   try {
-    const auth = await authorizedClient(connection);
     const drive = google.drive({ version: 'v3', auth });
     const { data } = await drive.files.get({
       fileId: spreadsheetId,

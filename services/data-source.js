@@ -4,6 +4,8 @@ import { listWorksheets, readHeaderAndSample, countRows, getLastModified } from 
 import { suggestMappings, validateMappingSet } from './mapping-engine.js';
 import { checkEntitlement } from './billing.js';
 import { PlanLimitError } from './job-service.js';
+import { authForSource } from './sheet-auth.js';
+import { authorizedClient } from '../lib/google/oauth.js';
 
 /**
  * Data source lifecycle: connect a spreadsheet, pick a worksheet, map columns.
@@ -81,7 +83,7 @@ export async function connectSpreadsheet({ shopId, spreadsheetId, name, url, mod
 
   // Confirm the account can actually open the file before saving it, so a
   // source never lands in a state where every sync fails on permissions.
-  const { worksheets, title } = await listWorksheets(connection, spreadsheetId);
+  const { worksheets, title } = await listWorksheets(await authorizedClient(connection), spreadsheetId);
 
   const data = {
     name: name || title,
@@ -128,9 +130,11 @@ export async function selectWorksheet({ shopId, dataSourceId, sheetId, title, he
     include: { googleConnection: true, mappings: true },
   });
   if (!source) throw new Error('That data source does not exist');
-  if (!source.googleConnection) throw new Error('This source has no Google connection');
+  // Resolves to the merchant OAuth client or the shared-sheet service
+  // account, depending on how this source was connected.
+  const auth = await authForSource(source);
 
-  const { headers, sample } = await readHeaderAndSample(source.googleConnection, {
+  const { headers, sample } = await readHeaderAndSample(auth, {
     spreadsheetId: source.spreadsheetId,
     sheetTitle: title,
     headerRow,
@@ -140,7 +144,7 @@ export async function selectWorksheet({ shopId, dataSourceId, sheetId, title, he
     throw new Error(`Row ${headerRow} of "${title}" is empty, so there are no column names to map`);
   }
 
-  const rowCount = await countRows(source.googleConnection, {
+  const rowCount = await countRows(auth, {
     spreadsheetId: source.spreadsheetId,
     sheetTitle: title,
     headerRow,
@@ -247,11 +251,20 @@ export async function refreshSource({ shopId, dataSourceId }) {
     where: { id: dataSourceId, shopId },
     include: { googleConnection: true, sheets: { where: { isSelected: true }, take: 1 } },
   });
-  if (!source?.googleConnection || !source.sheets[0]) return null;
+  if (!source?.sheets[0]) return null;
+  // Only the Google-backed kinds have live metadata to re-read; an uploaded
+  // file's counts are fixed until it is uploaded again.
+  if (source.kind !== 'GOOGLE_SHEET' && source.kind !== 'GOOGLE_SHEET_SERVICE') return null;
 
+  const auth = await authForSource(source);
+
+  // A service account has no Drive access, so the modified time is only
+  // available on the OAuth path. Its absence is not an error.
   const [modifiedAt, rowCount] = await Promise.all([
-    getLastModified(source.googleConnection, source.spreadsheetId),
-    countRows(source.googleConnection, {
+    source.kind === 'GOOGLE_SHEET'
+      ? getLastModified(auth, source.spreadsheetId).catch(() => null)
+      : Promise.resolve(null),
+    countRows(auth, {
       spreadsheetId: source.spreadsheetId,
       sheetTitle: source.sheets[0].title,
       headerRow: source.sheets[0].headerRow,
@@ -259,7 +272,10 @@ export async function refreshSource({ shopId, dataSourceId }) {
   ]);
 
   await prisma.$transaction([
-    prisma.dataSource.update({ where: { id: dataSourceId }, data: { lastModifiedAt: modifiedAt } }),
+    prisma.dataSource.update({
+      where: { id: dataSourceId },
+      data: { lastModifiedAt: modifiedAt ?? source.lastModifiedAt },
+    }),
     prisma.dataSourceSheet.update({ where: { id: source.sheets[0].id }, data: { rowCount } }),
   ]);
 

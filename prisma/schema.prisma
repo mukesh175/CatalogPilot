@@ -36,7 +36,16 @@ enum SubscriptionStatus {
 }
 
 enum DataSourceKind {
+  /// Merchant connected their Google account with OAuth. Needs Google app
+  /// verification before it can be offered publicly.
   GOOGLE_SHEET
+  /// Merchant shared one sheet with CatalogPilot's service account and pasted
+  /// its link. No consent screen, so no verification — and the sheet stays
+  /// private to that one address.
+  GOOGLE_SHEET_SERVICE
+  /// Merchant published the sheet to the web as CSV and pasted that link.
+  /// Simplest to set up, but the link is readable by anyone who has it.
+  CSV_URL
   CSV
   EXCEL
 }

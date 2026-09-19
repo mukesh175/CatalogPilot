@@ -5,6 +5,7 @@ import { useApi } from '../../../lib/use-api.js';
 import { api, formatNumber, formatRelative } from '../../../lib/client-api.js';
 import { useToast } from '../../../components/AppProviders.jsx';
 import { Card, Banner, EmptyState, SkeletonTable, Badge, StatusBadge, PageHeader } from '../../../components/ui.jsx';
+import { ConnectByLink } from '../../../components/ConnectByLink.jsx';
 
 const SCHEDULE_LABELS = {
   MANUAL: 'Manual only',
@@ -17,7 +18,9 @@ const SCHEDULE_LABELS = {
 export default function SourcesPage() {
   const toast = useToast();
   const { data, loading, error, refresh } = useApi('/api/sources');
-  const sources = data?.sources || [];
+  const sources = (data?.sources || []).filter(
+    (source) => source.kind === 'GOOGLE_SHEET' || source.kind === 'GOOGLE_SHEET_SERVICE'
+  );
 
   const runSync = async (source) => {
     try {
@@ -42,6 +45,8 @@ export default function SourcesPage() {
       />
 
       {error ? <Banner tone="critical">{error.message}</Banner> : null}
+
+      <ConnectByLink onConnected={refresh} />
 
       <Card padded={false}>
         {loading ? (
@@ -81,7 +86,9 @@ export default function SourcesPage() {
                         {source.name}
                       </Link>
                       <div className="cp-subdued" style={{ fontSize: 12 }}>
-                        {source.connection?.email || 'No Google account'}
+                        {source.kind === 'GOOGLE_SHEET_SERVICE'
+                          ? 'Shared with CatalogPilot'
+                          : source.connection?.email || 'No Google account'}
                       </div>
                     </td>
                     <td>

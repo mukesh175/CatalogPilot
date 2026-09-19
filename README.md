@@ -90,7 +90,38 @@ function durations.
 
 After the first deploy, set `APP_URL` and `GOOGLE_REDIRECT_URI` to the real production URL and redeploy.
 
-### 6. Install on a store
+### 6. Choose how merchants connect their sheet
+
+There are three paths, because Google OAuth with the `spreadsheets` scope is a
+*sensitive scope*: it needs Google app verification before it can be offered publicly, which takes
+weeks and requires a domain you own (a `*.vercel.app` subdomain will not pass). The other two paths
+skip the consent screen entirely and work today.
+
+| Path | Merchant does | Sheet privacy | Scheduled sync | Google verification |
+| --- | --- | --- | --- | --- |
+| **Shared with service account** | Shares the sheet with one address, pastes the link | Private | Yes | **Not needed** |
+| **Published CSV link** | Publishes the sheet to the web, pastes the link | **Public to anyone with the link** | Yes | **Not needed** |
+| CSV / Excel upload | Uploads a file | Private | No — manual | Not needed |
+| Google OAuth | Picks a sheet from their Drive | Private | Yes | Required before public launch |
+
+**To enable the shared-sheet path** (recommended), create a service account:
+
+1. Google Cloud Console → **IAM & Admin → Service Accounts → Create service account**
+2. Name it `catalogpilot-sheets`, create it, then open it → **Keys → Add key → JSON**
+3. Enable the **Google Sheets API** for the project if you have not already
+4. Set the two variables:
+
+```bash
+GOOGLE_SERVICE_ACCOUNT_EMAIL=catalogpilot-sheets@your-project.iam.gserviceaccount.com
+# The downloaded JSON, base64 encoded:
+GOOGLE_SERVICE_ACCOUNT_KEY=$(base64 -w0 service-account.json)
+```
+
+The service account needs no roles and no domain-wide delegation — it only ever reads files that a
+merchant has explicitly shared with its address. Leave both variables unset and the option is hidden
+from the UI automatically.
+
+### 7. Install on a store
 
 ```bash
 shopify app config link     # links shopify.app.toml to your app
