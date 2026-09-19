@@ -3,8 +3,8 @@
 import { useRef, useState } from 'react';
 import Link from 'next/link';
 import { useApi } from '../../../../lib/use-api.js';
-import { apiFetch, formatNumber, formatRelative } from '../../../../lib/client-api.js';
-import { useToast } from '../../../../components/AppProviders.jsx';
+import { api, apiFetch, formatNumber, formatRelative } from '../../../../lib/client-api.js';
+import { useToast, useConfirm } from '../../../../components/AppProviders.jsx';
 import { Card, Banner, EmptyState, SkeletonTable, StatusBadge, PageHeader } from '../../../../components/ui.jsx';
 
 /**
@@ -15,6 +15,7 @@ import { Card, Banner, EmptyState, SkeletonTable, StatusBadge, PageHeader } from
  */
 export default function FileSourcesPage() {
   const toast = useToast();
+  const confirm = useConfirm();
   const inputRef = useRef(null);
   const { data, loading, error, refresh } = useApi('/api/sources');
   const [uploading, setUploading] = useState(false);
@@ -40,6 +41,29 @@ export default function FileSourcesPage() {
     } finally {
       setUploading(false);
       if (inputRef.current) inputRef.current.value = '';
+    }
+  };
+
+  /**
+   * Removing a source stops future syncs and forgets its mapping. The products
+   * it already created in Shopify are deliberately left alone — the merchant
+   * deletes those in Shopify if they want them gone.
+   */
+  const remove = async (source) => {
+    const ok = await confirm({
+      title: `Delete ${source.name}?`,
+      body: 'Its column mapping and uploaded rows are removed, and it will stop syncing. Products already created in your Shopify store are not changed or deleted.',
+      confirmLabel: 'Delete source',
+      destructive: true,
+    });
+    if (!ok) return;
+
+    try {
+      await api.delete(`/api/sources/${source.id}`);
+      toast.success(`${source.name} deleted.`);
+      refresh();
+    } catch (caught) {
+      toast.error(caught.message);
     }
   };
 
@@ -137,9 +161,14 @@ export default function FileSourcesPage() {
                       <StatusBadge status={source.status} />
                     </td>
                     <td>
-                      <Link href={`/sources/${source.id}`} className="cp-btn cp-btn-sm">
-                        Configure
-                      </Link>
+                      <div className="cp-inline">
+                        <Link href={`/sources/${source.id}`} className="cp-btn cp-btn-sm">
+                          Configure
+                        </Link>
+                        <button type="button" className="cp-btn cp-btn-sm" onClick={() => remove(source)}>
+                          Delete
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}

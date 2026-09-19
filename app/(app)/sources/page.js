@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useApi } from '../../../lib/use-api.js';
 import { api, formatNumber, formatRelative } from '../../../lib/client-api.js';
-import { useToast } from '../../../components/AppProviders.jsx';
+import { useToast, useConfirm } from '../../../components/AppProviders.jsx';
 import { Card, Banner, EmptyState, SkeletonTable, Badge, StatusBadge, PageHeader } from '../../../components/ui.jsx';
 import { ConnectByLink } from '../../../components/ConnectByLink.jsx';
 
@@ -17,10 +17,33 @@ const SCHEDULE_LABELS = {
 
 export default function SourcesPage() {
   const toast = useToast();
+  const confirm = useConfirm();
   const { data, loading, error, refresh } = useApi('/api/sources');
   const sources = (data?.sources || []).filter(
     (source) => source.kind === 'GOOGLE_SHEET' || source.kind === 'GOOGLE_SHEET_SERVICE'
   );
+
+  /**
+   * Disconnecting stops future syncs and forgets the mapping. Products already
+   * created in Shopify are deliberately left untouched.
+   */
+  const remove = async (source) => {
+    const ok = await confirm({
+      title: `Disconnect ${source.name}?`,
+      body: 'Its column mapping is removed and it will stop syncing. Products already created in your Shopify store are not changed or deleted.',
+      confirmLabel: 'Disconnect source',
+      destructive: true,
+    });
+    if (!ok) return;
+
+    try {
+      await api.delete(`/api/sources/${source.id}`);
+      toast.success(`${source.name} disconnected.`);
+      refresh();
+    } catch (caught) {
+      toast.error(caught.message);
+    }
+  };
 
   const runSync = async (source) => {
     try {
@@ -143,6 +166,9 @@ export default function SourcesPage() {
                         <Link href={`/sources/${source.id}`} className="cp-btn cp-btn-sm">
                           Configure
                         </Link>
+                        <button type="button" className="cp-btn cp-btn-sm" onClick={() => remove(source)}>
+                          Disconnect
+                        </button>
                       </div>
                     </td>
                   </tr>
