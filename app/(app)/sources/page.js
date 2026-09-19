@@ -58,7 +58,7 @@ export default function SourcesPage() {
             description="Connect your supplier spreadsheet to start importing your catalog."
             action={
               <Link href="/onboarding" className="cp-btn cp-btn-primary">
-                Connect Google Sheet
+                Connect a sheet
               </Link>
             }
           />

@@ -1,6 +1,7 @@
 'use client';
 
 import { Suspense, useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { api, formatDate, formatNumber } from '../../lib/client-api.js';
 import { useToast } from '../../components/AppProviders.jsx';
@@ -8,6 +9,7 @@ import { StepIndicator } from '../../components/onboarding/Steps.jsx';
 import { MappingTable } from '../../components/MappingTable.jsx';
 import { PreviewTable } from '../../components/PreviewTable.jsx';
 import { RuleQuickStart } from '../../components/RuleQuickStart.jsx';
+import { ConnectByLink } from '../../components/ConnectByLink.jsx';
 import { Card, Banner, EmptyState, Skeleton, ProgressBar, Badge } from '../../components/ui.jsx';
 
 /**
@@ -58,6 +60,37 @@ function OnboardingWizard() {
       window.open(url, '_top');
     } catch (error) {
       toast.error(error.message);
+      setBusy(false);
+    }
+  };
+
+  /**
+   * A source connected by link skips straight ahead: a shared sheet still needs
+   * a worksheet chosen, while a published CSV has only one, so its mapping is
+   * already waiting.
+   */
+  const onLinkConnected = async (result) => {
+    setSource(result.source);
+    setBusy(true);
+    try {
+      if (result.source.kind === 'GOOGLE_SHEET_SERVICE') {
+        setWorksheets(result.worksheets);
+        setStep('worksheet');
+        return;
+      }
+
+      const fields = await api.get(`/api/sources/${result.source.id}/mappings`);
+      setMappingState({
+        mappings: fields.mappings,
+        availableFields: fields.availableFields,
+        headers: result.headers,
+        sample: result.sample,
+        rowCount: result.rowCount,
+      });
+      setStep('mapping');
+    } catch (error) {
+      toast.error(error.message);
+    } finally {
       setBusy(false);
     }
   };
@@ -166,7 +199,7 @@ function OnboardingWizard() {
       <StepIndicator current={step} />
 
       {step === 'welcome' ? (
-        <WelcomeStep onConnect={connectGoogle} busy={busy} />
+        <WelcomeStep onConnect={connectGoogle} onLinkConnected={onLinkConnected} busy={busy} />
       ) : step === 'source' ? (
         <SourceStep onSelect={chooseSpreadsheet} busy={busy} onReconnect={connectGoogle} />
       ) : step === 'worksheet' ? (
@@ -189,31 +222,75 @@ function OnboardingWizard() {
   );
 }
 
-function WelcomeStep({ onConnect, busy }) {
+function WelcomeStep({ onConnect, onLinkConnected, busy }) {
+  const [showGoogleAccount, setShowGoogleAccount] = useState(false);
+
   return (
-    <Card>
-      <div className="text-center py-4">
-        <h1 style={{ fontSize: 26 }}>Turn your supplier catalog into a Shopify store.</h1>
-        <p className="cp-subdued mt-3 mx-auto" style={{ maxWidth: 520 }}>
-          Connect the spreadsheet your supplier already sends you. CatalogPilot reads the columns,
-          matches them to Shopify fields, applies your pricing rules, and keeps everything in sync —
-          without asking you to restructure the sheet.
-        </p>
+    <div className="cp-stack">
+      <Card>
+        <div className="text-center py-4">
+          <h1 style={{ fontSize: 26 }}>Turn your supplier catalog into a Shopify store.</h1>
+          <p className="cp-subdued mt-3 mx-auto" style={{ maxWidth: 520 }}>
+            Connect the spreadsheet your supplier already sends you. CatalogPilot reads the columns,
+            matches them to Shopify fields, applies your pricing rules, and keeps everything in sync —
+            without asking you to restructure the sheet.
+          </p>
 
-        <div className="row g-3 my-4 text-start mx-auto" style={{ maxWidth: 680 }}>
-          <Highlight title="Smart column mapping" body="Recognises the column names suppliers actually use." />
-          <Highlight title="Rules, not spreadsheets" body="Set your markup and stock policy once." />
-          <Highlight title="Preview before anything changes" body="See every edit, and why, before it runs." />
+          <div className="row g-3 mt-3 text-start mx-auto" style={{ maxWidth: 680 }}>
+            <Highlight title="Smart column mapping" body="Recognises the column names suppliers actually use." />
+            <Highlight title="Rules, not spreadsheets" body="Set your markup and stock policy once." />
+            <Highlight title="Preview before anything changes" body="See every edit, and why, before it runs." />
+          </div>
         </div>
+      </Card>
 
-        <button type="button" className="cp-btn cp-btn-primary" onClick={onConnect} disabled={busy}>
-          {busy ? 'Opening Google…' : 'Connect Google Sheet'}
-        </button>
-        <p className="cp-subdued mt-3 mb-0" style={{ fontSize: 12.5 }}>
-          CatalogPilot only reads the spreadsheets you choose.
-        </p>
-      </div>
-    </Card>
+      {/*
+        Connecting by link is the default because it works immediately. Signing
+        in with a Google account needs Google's app verification first, so it is
+        offered below rather than as the main path.
+      */}
+      <ConnectByLink onConnected={onLinkConnected} />
+
+      <Card title="Other ways to connect">
+        <div className="cp-stack-sm">
+          <div className="cp-spread flex-wrap gap-2">
+            <div>
+              <strong style={{ fontSize: 13.5 }}>Upload a CSV or Excel file</strong>
+              <div className="cp-subdued" style={{ fontSize: 12.5 }}>
+                Good for a one-off import. Scheduled sync needs a link instead.
+              </div>
+            </div>
+            <Link href="/sources/files" className="cp-btn cp-btn-sm">
+              Upload a file
+            </Link>
+          </div>
+
+          <hr />
+
+          <div className="cp-spread flex-wrap gap-2">
+            <div>
+              <strong style={{ fontSize: 13.5 }}>Sign in with Google and pick from your Drive</strong>
+              <div className="cp-subdued" style={{ fontSize: 12.5 }}>
+                Requires Google to finish reviewing this app. Until then only approved testers can use it.
+              </div>
+            </div>
+            {showGoogleAccount ? (
+              <button type="button" className="cp-btn cp-btn-sm" onClick={onConnect} disabled={busy}>
+                {busy ? 'Opening Google…' : 'Continue anyway'}
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="cp-btn cp-btn-sm"
+                onClick={() => setShowGoogleAccount(true)}
+              >
+                Show anyway
+              </button>
+            )}
+          </div>
+        </div>
+      </Card>
+    </div>
   );
 }
 

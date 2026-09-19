@@ -52,7 +52,7 @@ export default function DashboardPage() {
           description="CatalogPilot reads your supplier spreadsheet, maps it to Shopify fields, and keeps your catalog up to date automatically."
           action={
             <Link href="/onboarding" className="cp-btn cp-btn-primary">
-              Connect Google Sheet
+              Connect a sheet
             </Link>
           }
         />
