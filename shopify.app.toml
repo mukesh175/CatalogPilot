@@ -6,9 +6,12 @@
 #  reauthorization when they differ.
 
 name = "CatalogPilot"
-handle = "catalogpilot"
+# Shopify ke poore platform par handle unique hona chahiye — "catalogpilot"
+# pehle se liya hua hai. Ise kabhi bhi badal sakte hain; app ke code me kahin
+# use nahi hota (admin URLs SHOPIFY_API_KEY se bante hain).
+handle = "catalogpilot-twc"
 client_id = "d6fad87f38488c1b9e0f9bed31ff97f0"
-application_url = "https://catalogpilot.vercel.app"
+application_url = "https://catalog-pilot-beige.vercel.app"
 embedded = true
 
 [access_scopes]
@@ -22,8 +25,8 @@ use_legacy_install_flow = false
 
 [auth]
 redirect_urls = [
-  "https://catalogpilot.vercel.app/api/auth/shopify/callback",
-  "https://catalogpilot.vercel.app/api/auth/google/callback"
+  "https://catalog-pilot-beige.vercel.app/api/auth/shopify/callback",
+  "https://catalog-pilot-beige.vercel.app/api/auth/google/callback"
 ]
 
 [webhooks]
@@ -47,9 +50,9 @@ api_version = "2026-07"
 
   # Mandatory compliance topics.
   [webhooks.privacy_compliance]
-  customer_data_request_url = "https://catalogpilot.vercel.app/api/webhooks"
-  customer_deletion_url = "https://catalogpilot.vercel.app/api/webhooks"
-  shop_deletion_url = "https://catalogpilot.vercel.app/api/webhooks"
+  customer_data_request_url = "https://catalog-pilot-beige.vercel.app/api/webhooks"
+  customer_deletion_url = "https://catalog-pilot-beige.vercel.app/api/webhooks"
+  shop_deletion_url = "https://catalog-pilot-beige.vercel.app/api/webhooks"
 
 # No app proxy: CatalogPilot has no storefront surface.
 

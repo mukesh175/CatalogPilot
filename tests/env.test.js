@@ -8,7 +8,7 @@ import crypto from 'node:crypto';
 
 const BASE = {
   NODE_ENV: 'production',
-  APP_URL: 'https://catalogpilot.vercel.app',
+  APP_URL: 'https://catalog-pilot-beige.vercel.app',
   DATABASE_URL: 'postgresql://u:p@ep-x-pooler.eu-west-2.aws.neon.tech/db?sslmode=require',
   DIRECT_URL: 'postgresql://u:p@ep-x.eu-west-2.aws.neon.tech/db?sslmode=require',
   ENCRYPTION_KEY: crypto.randomBytes(32).toString('base64'),
@@ -19,7 +19,7 @@ const BASE = {
   SHOPIFY_API_VERSION: '2026-07',
   GOOGLE_CLIENT_ID: 'gid',
   GOOGLE_CLIENT_SECRET: 'gsecret',
-  GOOGLE_REDIRECT_URI: 'https://catalogpilot.vercel.app/api/auth/google/callback',
+  GOOGLE_REDIRECT_URI: 'https://catalog-pilot-beige.vercel.app/api/auth/google/callback',
   CRON_SECRET: 'vercel-cron-secret-value-ok',
 };
 

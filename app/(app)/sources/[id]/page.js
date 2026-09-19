@@ -15,13 +15,13 @@ import {
   PageHeader,
 } from '../../../../components/ui.jsx';
 
-const SCHEDULES = [
-  { value: 'MANUAL', label: 'Manual only' },
-  { value: 'HOURLY', label: 'Every hour' },
-  { value: 'EVERY_6_HOURS', label: 'Every 6 hours' },
-  { value: 'DAILY', label: 'Daily' },
-  { value: 'WEEKLY', label: 'Weekly' },
-];
+const SCHEDULE_LABELS = {
+  MANUAL: 'Manual only',
+  HOURLY: 'Every hour',
+  EVERY_6_HOURS: 'Every 6 hours',
+  DAILY: 'Daily',
+  WEEKLY: 'Weekly',
+};
 
 export default function SourceDetailPage({ params }) {
   const { id } = use(params);
@@ -171,9 +171,14 @@ export default function SourceDetailPage({ params }) {
                 value={source.schedule}
                 onChange={(event) => patch({ schedule: event.target.value }, 'Schedule updated.')}
               >
-                {SCHEDULES.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
+                {/*
+                  The list comes from the server, which already filters it by
+                  the plan and by what the host can actually run — so no option
+                  here can be chosen and then rejected on save.
+                */}
+                {(source.availableSchedules || ['MANUAL']).map((value) => (
+                  <option key={value} value={value}>
+                    {SCHEDULE_LABELS[value] || value}
                   </option>
                 ))}
               </select>

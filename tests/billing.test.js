@@ -49,7 +49,22 @@ describe('planLimits', () => {
     state.subscription = { plan: 'PRO', status: 'ACTIVE' };
     const limits = await planLimits('shop_1');
     expect(limits.maxProducts).toBeNull();
-    expect(limits.schedules).toContain('HOURLY');
+    expect(limits.schedules).toContain('DAILY');
+  });
+
+  it('hides sub-daily schedules while the host cannot run them', async () => {
+    // Vercel Hobby runs one cron a day, so an hourly schedule would be a
+    // promise the deployment cannot keep. See SUBDAILY_SYNC_SUPPORTED.
+    const { SUBDAILY_SYNC_SUPPORTED } = await import('../lib/plans.js');
+    state.subscription = { plan: 'PRO', status: 'ACTIVE' };
+    const limits = await planLimits('shop_1');
+
+    if (SUBDAILY_SYNC_SUPPORTED) {
+      expect(limits.schedules).toContain('HOURLY');
+    } else {
+      expect(limits.schedules).not.toContain('HOURLY');
+      expect(limits.schedules).not.toContain('EVERY_6_HOURS');
+    }
   });
 
   it('falls back to Free when a paid subscription is not active', async () => {
@@ -98,9 +113,16 @@ describe('checkEntitlement — schedules', () => {
     expect((await checkEntitlement('shop_1', 'schedule', { schedule: 'HOURLY' })).allowed).toBe(false);
   });
 
-  it('allows hourly on Pro', async () => {
+  it('allows weekly on Pro', async () => {
     state.subscription = { plan: 'PRO', status: 'ACTIVE' };
-    expect((await checkEntitlement('shop_1', 'schedule', { schedule: 'HOURLY' })).allowed).toBe(true);
+    expect((await checkEntitlement('shop_1', 'schedule', { schedule: 'WEEKLY' })).allowed).toBe(true);
+  });
+
+  it('refuses a schedule the host cannot run, even on Pro', async () => {
+    const { SUBDAILY_SYNC_SUPPORTED } = await import('../lib/plans.js');
+    state.subscription = { plan: 'PRO', status: 'ACTIVE' };
+    const result = await checkEntitlement('shop_1', 'schedule', { schedule: 'HOURLY' });
+    expect(result.allowed).toBe(SUBDAILY_SYNC_SUPPORTED);
   });
 });
 

@@ -142,11 +142,19 @@ Railway). They are not used on Vercel.
 **Vercel Hobby only permits one cron invocation per day**, and a more frequent expression in
 `vercel.json` *fails the deployment*. Hobby also invokes it at any point within the scheduled hour.
 
-This has a direct product consequence: on Hobby, the hourly and six-hourly schedules the Starter,
-Growth and Pro plans advertise cannot actually run, because the queue is only worked once a day.
-**Deploy on Vercel Pro** if you intend to sell those plans. If you must stay on Hobby, change the cron
-to `0 3 * * *` and restrict the app's own schedule options in `lib/plans.js` to `DAILY` and `WEEKLY`
-so the UI does not promise something the host cannot deliver.
+**This project is currently configured for Hobby:**
+
+- `vercel.json` runs the cron once daily (`0 3 * * *`)
+- `SUBDAILY_SYNC_SUPPORTED` in `lib/plans.js` is `false`, which removes the hourly and six-hourly
+  options from every plan — the API refuses them and the UI does not offer them. Without this the app
+  would sell a schedule the host cannot run.
+
+**To enable sub-daily sync after upgrading to Vercel Pro**, change two lines:
+
+1. `vercel.json` → `"schedule": "*/5 * * * *"`
+2. `lib/plans.js` → `export const SUBDAILY_SYNC_SUPPORTED = true;`
+
+Hourly and six-hourly then appear on the plans that include them.
 
 ---
 

@@ -3,6 +3,7 @@ import { withAuth, json, apiError, parseBody } from '../../../../lib/api.js';
 import { updateSourceSchema } from '../../../../validators/index.js';
 import { getSource, disconnectSource, refreshSource } from '../../../../services/data-source.js';
 import { setSchedule, PlanLimitError } from '../../../../services/job-service.js';
+import { planLimits } from '../../../../services/billing.js';
 
 export const GET = withAuth(async (request, { shopId, params }) => {
   const source = await getSource(shopId, params.id);
@@ -18,6 +19,9 @@ export const GET = withAuth(async (request, { shopId, params }) => {
       spreadsheetId: source.spreadsheetId,
       fileUrl: source.fileUrl,
       schedule: source.schedule,
+      // Only the schedules this plan *and* this host can actually run, so the
+      // picker never offers something that would fail on save.
+      availableSchedules: ['MANUAL', ...(await planLimits(shopId)).schedules.filter((s) => s !== 'MANUAL')],
       isPaused: source.isPaused,
       nextRunAt: source.nextRunAt,
       lastRunAt: source.lastRunAt,
