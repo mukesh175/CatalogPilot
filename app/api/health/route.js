@@ -33,9 +33,36 @@ export async function GET() {
       status: healthy ? 'ok' : 'degraded',
       checks,
       ...(databaseError ? { database: databaseError } : {}),
+      oauth: oauthConfig(),
     },
     { status: healthy ? 200 : 503 }
   );
+}
+
+/**
+ * The OAuth redirect URI this deployment will send to Google.
+ *
+ * Both values are already public — they appear in the browser's address bar
+ * during the consent flow — and a mismatch between them and the Google Console
+ * entry is the single most common setup failure, producing a
+ * `redirect_uri_mismatch` that says nothing about which side is wrong.
+ */
+function oauthConfig() {
+  const appUrl = process.env.APP_URL || null;
+  const redirectUri = process.env.GOOGLE_REDIRECT_URI || null;
+  const expected = appUrl ? `${appUrl.replace(/\/$/, '')}/api/auth/google/callback` : null;
+
+  return {
+    appUrl,
+    googleRedirectUri: redirectUri,
+    // Paste this exact string into Google Cloud Console →
+    // Credentials → OAuth client → Authorized redirect URIs.
+    mustMatchInGoogleConsole: redirectUri,
+    matchesAppUrl: Boolean(expected && redirectUri === expected),
+    ...(expected && redirectUri !== expected
+      ? { warning: `GOOGLE_REDIRECT_URI does not match APP_URL. Expected ${expected}` }
+      : {}),
+  };
 }
 
 /**
