@@ -7,8 +7,8 @@
 
 name = "CatalogPilot"
 handle = "catalogpilot"
-client_id = "REPLACE_WITH_YOUR_CLIENT_ID"
-application_url = "https://your-tunnel-domain.example.com"
+client_id = "d6fad87f38488c1b9e0f9bed31ff97f0"
+application_url = "https://catalogpilot.vercel.app"
 embedded = true
 
 [access_scopes]
@@ -22,8 +22,8 @@ use_legacy_install_flow = false
 
 [auth]
 redirect_urls = [
-  "https://your-tunnel-domain.example.com/api/auth/shopify/callback",
-  "https://your-tunnel-domain.example.com/api/auth/google/callback"
+  "https://catalogpilot.vercel.app/api/auth/shopify/callback",
+  "https://catalogpilot.vercel.app/api/auth/google/callback"
 ]
 
 [webhooks]
@@ -47,9 +47,9 @@ api_version = "2026-07"
 
   # Mandatory compliance topics.
   [webhooks.privacy_compliance]
-  customer_data_request_url = "https://your-tunnel-domain.example.com/api/webhooks"
-  customer_deletion_url = "https://your-tunnel-domain.example.com/api/webhooks"
-  shop_deletion_url = "https://your-tunnel-domain.example.com/api/webhooks"
+  customer_data_request_url = "https://catalogpilot.vercel.app/api/webhooks"
+  customer_deletion_url = "https://catalogpilot.vercel.app/api/webhooks"
+  shop_deletion_url = "https://catalogpilot.vercel.app/api/webhooks"
 
 # No app proxy: CatalogPilot has no storefront surface.
 
