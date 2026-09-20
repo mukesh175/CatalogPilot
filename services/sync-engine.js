@@ -546,7 +546,7 @@ async function resolveExistingForApply(admin, item, row, headers, mappings, log)
 
 // ------------------------------------------------------------------ create
 
-async function applyCreate({ admin, plan, job, source, locationId, collectionCache, log }) {
+export async function applyCreate({ admin, plan, job, source, locationId, collectionCache, log }) {
   const fields = plan.fields;
   const options = plan.options;
 
@@ -579,27 +579,11 @@ async function applyCreate({ admin, plan, job, source, locationId, collectionCac
       : null,
   });
 
-  // The product comes back with one default variant; update it in place rather
-  // than creating a second one.
-  const defaultVariant = product.variants?.nodes?.[0];
-  const variantInput = buildVariantInput(fields, options);
-
-  let variantId = defaultVariant?.id;
-  let inventoryItemId = defaultVariant?.inventoryItem?.id;
-
-  if (defaultVariant) {
-    const [updated] = await updateVariants(admin, product.id, [{ id: defaultVariant.id, ...variantInput }]);
-    variantId = updated?.id || variantId;
-    inventoryItemId = updated?.inventoryItem?.id || inventoryItemId;
-  } else {
-    const [created] = await createVariants(admin, product.id, [variantInput]);
-    variantId = created?.id;
-    inventoryItemId = created?.inventoryItem?.id;
-  }
-
-  await applyInventory({ admin, locationId, inventoryItemId, fields, activate: true, log });
-  await applyCollections({ admin, plan, job, collectionCache, productId: product.id, log });
-
+  // The mapping is recorded the moment the product exists, before anything
+  // that could still fail. Writing it at the end instead leaves an orphan: the
+  // product is in Shopify, but nothing here knows about it, so every later run
+  // has to rediscover it by SKU — and if the SKU ever changed, would create a
+  // duplicate. This is exactly what happened on the first real sync.
   const productMapping = await prisma.productMapping.upsert({
     where: { shopId_externalKey: { shopId: job.shopId, externalKey: plan.sku } },
     create: {
@@ -619,6 +603,26 @@ async function applyCreate({ admin, plan, job, source, locationId, collectionCac
     },
   });
 
+  // The product comes back with one default variant; update it in place rather
+  // than creating a second one.
+  const defaultVariant = product.variants?.nodes?.[0];
+  const variantInput = buildVariantInput(fields, options);
+
+  let variantId = defaultVariant?.id;
+  let inventoryItemId = defaultVariant?.inventoryItem?.id;
+
+  if (defaultVariant) {
+    const [updated] = await updateVariants(admin, product.id, [{ id: defaultVariant.id, ...variantInput }]);
+    variantId = updated?.id || variantId;
+    inventoryItemId = updated?.inventoryItem?.id || inventoryItemId;
+  } else {
+    const [created] = await createVariants(admin, product.id, [variantInput]);
+    variantId = created?.id;
+    inventoryItemId = created?.inventoryItem?.id;
+  }
+
+  // Recorded before inventory and collections for the same reason as above:
+  // the variant exists now, and the steps that follow can still fail.
   if (variantId) {
     await prisma.variantMapping.upsert({
       where: { shopId_sku: { shopId: job.shopId, sku: plan.sku } },
@@ -639,6 +643,9 @@ async function applyCreate({ admin, plan, job, source, locationId, collectionCac
       },
     });
   }
+
+  await applyInventory({ admin, locationId, inventoryItemId, fields, activate: true, log });
+  await applyCollections({ admin, plan, job, collectionCache, productId: product.id, log });
 
   return { productId: product.id, variantId };
 }
@@ -747,7 +754,7 @@ async function applyUpdate({ admin, plan, job, source, locationId, collectionCac
   return { productId, variantId: plan.shopifyVariantId };
 }
 
-function buildVariantInput(fields, options, changed = null) {
+export function buildVariantInput(fields, options, changed = null) {
   const input = {};
   const wants = (key) => (changed ? changed.has(key) : fields[key] != null);
 
@@ -790,7 +797,7 @@ async function applyInventory({ admin, locationId, inventoryItemId, fields, acti
 
   try {
     if (activate) {
-      await activateInventory({ admin, inventoryItemId, locationId, available: Math.max(0, quantity) });
+      await activateInventory(admin, { inventoryItemId, locationId, available: Math.max(0, quantity) });
       return;
     }
     await setInventoryQuantities(admin, {
@@ -800,7 +807,7 @@ async function applyInventory({ admin, locationId, inventoryItemId, fields, acti
   } catch (error) {
     // An item that was never stocked at this location has to be activated first.
     if (error instanceof ShopifyApiError && /not stocked|inventory item/i.test(error.message)) {
-      await activateInventory({ admin, inventoryItemId, locationId, available: Math.max(0, quantity) });
+      await activateInventory(admin, { inventoryItemId, locationId, available: Math.max(0, quantity) });
       return;
     }
     log.warn('sync.inventory_failed', { error });
